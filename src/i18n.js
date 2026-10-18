@@ -80,7 +80,7 @@ const join = (...parts) => ({
 
 export const T = {
   status: {
-    ok: ({ total, stale, capped }) =>
+    ok: ({ total, stale, capped, future = 0 }) =>
       join(
         {
           en: `LibreLinkUp answers: ${total} ${plural(total, 'patient', 'patients')}, ${stale} without a measurement for 15 min or more.`,
@@ -90,6 +90,12 @@ export const T = {
           ? {
               en: `${capped} more ${plural(capped, 'patient is', 'patients are')} left out (20 at most).`,
               fr: `${capped} ${pluralFr(capped, 'autre patient est ignoré', 'autres patients sont ignorés')} (20 au plus).`,
+            }
+          : {},
+        future > 0
+          ? {
+              en: `${future} ${plural(future, 'measurement is', 'measurements are')} dated in the future: check the clock of Gladys.`,
+              fr: `${future} ${pluralFr(future, 'mesure est datée', 'mesures sont datées')} dans le futur : vérifiez l’horloge de Gladys.`,
             }
           : {},
       ),

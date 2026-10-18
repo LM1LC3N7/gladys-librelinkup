@@ -5,7 +5,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { cut } from '../src/devices.js';
 import {
+  cleanName,
   formatDate,
   parseConnections,
   parseFactoryTimestamp,
@@ -83,6 +85,17 @@ test('a measurement: plausible values only, trend 1 to 5', () => {
   assert.equal(parseMeasurement(null), null);
   assert.equal(toMmol(104), 5.8);
   assert.equal(toMmol(54), 3);
+});
+
+test('names: controls, bidi and zero-width characters removed; cut on a whole character', () => {
+  const c = String.fromCharCode;
+  const name = `Al${c(0x85)}ice${c(0x202e)} ${c(0x200b)}Mar${c(0x2066)}tin${c(0xfeff)}`;
+  assert.equal(cleanName(name), 'Al ice Martin');
+  assert.equal(cleanName('  a \t\n b '), 'a b');
+  assert.equal(cleanName(42), '');
+  assert.equal(cut('ab😀', 3), 'ab', 'never half of a surrogate pair');
+  assert.equal(cut('ab😀', 4), 'ab😀');
+  assert.equal(cut('abc', 2), 'ab');
 });
 
 test('the connections: id, name, measurement, a coherent target range', () => {

@@ -36,7 +36,8 @@ export class LibreError extends Error {
 
 /**
  * The credentials refused: the login answered "wrong credentials" (status 2
- * in the body, or HTTP 401), or the list answered 401 to a token that a
+ * or an `error` object in the API's own JSON, with HTTP 200 or any 4xx but
+ * 429; or HTTP 401), or the list answered 401 to a token that a
  * login had just given. Trying a wrong password again and again locks the
  * account: the app stops for a long, growing delay. A 401 to an older token
  * is not a refusal: the client logs in again, once.

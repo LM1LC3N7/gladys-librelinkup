@@ -33,6 +33,13 @@ export const patientKey = (id) =>
 
 export const deviceIds = (gladys, key) => gladys.externalIds(DEVICE_TYPE, key);
 
+/** A text cut to `length` code units, never in the middle of a surrogate pair. */
+export function cut(text, length) {
+  if (text.length <= length) return text;
+  const code = text.charCodeAt(length - 1);
+  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? length - 1 : length);
+}
+
 /** The feature keys of one unit. */
 export const unitFeatures = (unit) =>
   unit === 'mmol'
@@ -93,10 +100,10 @@ export function buildDevice(gladys, { key, name, hasTargets = false }, unit = 'm
     });
   const features = [
     glucose(keys.glucose, 'Glucose'),
-    feature(ids, FEATURES.TREND, 'Trend (1 falling fast, 3 stable, 5 rising fast)', {
+    feature(ids, FEATURES.TREND, 'Trend (1 falling fast, 3 stable, 5 rising fast, 0 unknown)', {
       category: C.UNKNOWN,
       type: T.SENSOR.INTEGER,
-      min: 1,
+      min: 0,
       max: 5,
     }),
     feature(ids, FEATURES.AGE, 'Measurement age', {
@@ -111,7 +118,7 @@ export function buildDevice(gladys, { key, name, hasTargets = false }, unit = 'm
     features.push(glucose(keys.low, 'Target low'), glucose(keys.high, 'Target high'));
   }
   return withCreatedFeatures(gladys, {
-    name: name.slice(0, LIMITS.NAME_LENGTH),
+    name: cut(name, LIMITS.NAME_LENGTH),
     external_id: ids.device,
     model: 'LibreLinkUp patient',
     should_poll: false,

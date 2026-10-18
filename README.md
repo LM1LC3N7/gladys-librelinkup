@@ -50,7 +50,7 @@ Gladys ⇄ SDK ⇄ src/app.js (LibreApp)
 - **Devices**: `patient:<non-secret digest of the patient id>`; glucose
   `unknown`/`decimal` without unit (the core has no glucose unit: the unit
   is in the name and in the feature key, `glucose_mgdl` / `glucose_mmol`),
-  trend `unknown`/`integer` (1-5), age `duration`/`integer` minutes,
+  trend `unknown`/`integer` (1-5, 0 unknown), age `duration`/`integer` minutes,
   targets `unknown`/`decimal`. No history by default.
 - **Triggers**: `glucose_low` / `glucose_high` (threshold: the account's
   target or a fixed value; fresh measurements only; once per crossing,

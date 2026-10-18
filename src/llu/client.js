@@ -31,7 +31,14 @@ import {
 } from '../constants.js';
 import { CODES, LibreError } from './errors.js';
 import { httpRequest } from './http.js';
-import { parseConnections, parseLogin, parseTicket, readEnvelope, stepOf } from './parse.js';
+import {
+  parseConnections,
+  parseLogin,
+  parseTicket,
+  readEnvelope,
+  readJson,
+  stepOf,
+} from './parse.js';
 
 /** Seconds of a Retry-After header (delta form only), in ms, or null. */
 const retryAfterMs = (value) => {
@@ -53,7 +60,13 @@ export const USER_AGENT = (() => {
 })();
 
 /** A new, empty session: what a login gives (memory only). */
-export const newSession = () => ({ host: null, token: null, expiresMs: null, accountId: null });
+export const newSession = () => ({
+  host: null,
+  token: null,
+  expiresMs: null,
+  issuedMs: null,
+  accountId: null,
+});
 
 export class LibreClient {
   /**
@@ -116,6 +129,23 @@ export class LibreClient {
     if (envelope?.status === 920) {
       throw new LibreError(CODES.VERSION, 'App version refused', { status: response.status });
     }
+    const loose = readJson(response.body ?? Buffer.alloc(0));
+    if (
+      account &&
+      method === 'POST' &&
+      response.status >= 400 &&
+      response.status <= 499 &&
+      response.status !== 429 &&
+      loose !== null &&
+      (loose.status === 2 || (loose.error && typeof loose.error === 'object'))
+    ) {
+      // The login refused by the API itself (its own JSON, any 4xx): a
+      // refusal. A 4xx page without it (a proxy, a CDN) stays a failure.
+      throw new LibreError(CODES.REFUSED, 'Credentials refused', {
+        status: response.status,
+        account: true,
+      });
+    }
     if (response.status < 200 || response.status > 299) {
       const lockout = envelope?.data?.data?.lockout;
       throw new LibreError(CODES.HTTP, `HTTP ${response.status}`, {
@@ -148,11 +178,16 @@ export class LibreClient {
           session.host = host;
           session.token = login.token;
           session.expiresMs = login.expiresMs;
+          session.issuedMs = this.now();
           session.accountId = createHash('sha256').update(login.userId).digest('hex');
           return;
         case 'redirect': {
-          const next = REGIONS[login.region.toLowerCase()];
-          if (!next) throw new LibreError(CODES.REGION, 'Region not in the list');
+          // Own keys only: never `constructor`, `__proto__` or another
+          // inherited name.
+          const region = login.region.toLowerCase();
+          const next = Object.hasOwn(REGIONS, region) ? REGIONS[region] : null;
+          if (typeof next !== 'string')
+            throw new LibreError(CODES.REGION, 'Region not in the list');
           // One hop, to another host: never a loop.
           if (hop > 0 || next === host) throw new LibreError(CODES.BAD_ANSWER, 'Redirect loop');
           host = next;
@@ -180,9 +215,13 @@ export class LibreClient {
 
   /** Is the token missing, or about to expire? */
   needsLogin() {
-    const { token, expiresMs } = this.session;
+    const { token, expiresMs, issuedMs } = this.session;
     if (!token || !this.session.host) return true;
-    return expiresMs !== null && this.now() >= expiresMs - INTERVALS.TOKEN_MARGIN_MS;
+    if (expiresMs === null) return false;
+    // 1 h before the end, or half of its life for a short token.
+    const life = issuedMs === null ? Infinity : Math.max(0, expiresMs - issuedMs);
+    const margin = Math.min(INTERVALS.TOKEN_MARGIN_MS, life / 2);
+    return this.now() >= expiresMs - margin;
   }
 
   /**
@@ -206,6 +245,9 @@ export class LibreClient {
     }
     const ticket = parseTicket(value);
     if (ticket) {
+      if (ticket.token !== this.session.token || ticket.expiresMs !== this.session.expiresMs) {
+        this.session.issuedMs = this.now();
+      }
       this.session.token = ticket.token;
       if (ticket.expiresMs !== null) this.session.expiresMs = ticket.expiresMs;
     }

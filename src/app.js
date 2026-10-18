@@ -43,8 +43,16 @@ import {
   STORE_FILE,
   TARGET,
   TIMEOUTS,
+  UNITS,
 } from './constants.js';
-import { buildDevice, createdDevices, deviceIds, patientKey, unitFeatures } from './devices.js';
+import {
+  buildDevice,
+  createdDevices,
+  cut,
+  deviceIds,
+  patientKey,
+  unitFeatures,
+} from './devices.js';
 import { T } from './i18n.js';
 import { Store } from './store.js';
 import { LibreClient, newSession } from './llu/client.js';
@@ -66,6 +74,11 @@ const DAY = 24 * 60 * MINUTE;
 export const TRANSPORTS_PER_CALL = 100;
 const STALE = STALE_MINUTES.map(Number);
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+/** A glucose value (mg/dL) in a unit: mg/dL rounded, or mmol/L with one decimal. */
+const inUnit = (mgdl, unit) => {
+  if (mgdl === null || mgdl === undefined) return null;
+  return unit === 'mmol' ? toMmol(mgdl) : Math.round(mgdl);
+};
 /** The value of a state entry, number or text, as one comparable key. */
 const valueOf = (s) => (s.text !== undefined ? `t:${s.text}` : `s:${s.state}`);
 
@@ -124,6 +137,10 @@ export class LibreApp {
      *   alarms   key -> { low, high }: the thresholds of "low" and "high"
      *            fired and not armed again yet
      *   targets  the keys of the patients whose targets the API gave
+     *   lastMeasurement  key -> { timestampMs, firstSeen }: the date of the
+     *            last measurement accepted (the age goes on from it when an
+     *            answer lacks one) and when it was first seen (monotonic)
+     *   lastSeen key -> the monotonic time of the last reading with it
      * Never written to /data.
      */
     this.memoryKey = null;
@@ -133,6 +150,8 @@ export class LibreApp {
     this.stale = new Map();
     this.alarms = new Map();
     this.targets = new Set();
+    this.lastMeasurement = new Map();
+    this.lastSeen = new Map();
     /**
      * After a failed reading: { key (HMAC of the credentials), at, delay,
      * message }, so that a reconnection to Gladys does not skip the wait.
@@ -160,6 +179,8 @@ export class LibreApp {
     /** Patients above the cap of LIMITS.DEVICES. */
     this.capped = 0;
     this.staleCount = 0;
+    /** Measurements dated in the future at the last reading (clock of Gladys?). */
+    this.futureCount = 0;
     this.discoveredKey = null;
     this.transports = new Map();
     this.published.clear();
@@ -348,6 +369,8 @@ export class LibreApp {
       this.stale = new Map();
       this.alarms = new Map();
       this.targets = new Set();
+      this.lastMeasurement = new Map();
+      this.lastSeen = new Map();
       this.retryWait = null;
     }
     // The token of these very credentials is kept (a reconnection to Gladys
@@ -562,6 +585,9 @@ export class LibreApp {
   async persistFailure(err) {
     // Already written by read() when the answer arrived: never twice.
     if (err?.plan) return err.plan;
+    // The client was replaced (a new configuration): LibreLinkUp said
+    // nothing, nothing is written.
+    if (err?.code === CODES.CLOSED) return { kind: 'retry' };
     const ctx = err?.context ?? {
       baseKey: this.baseKey,
       key: null,
@@ -599,16 +625,25 @@ export class LibreApp {
     }
     if (ctx.step > 0) {
       // Within a series of refusals, no failure (a timeout...) is ever
-      // retried before the end of the current step.
-      const delay = Math.max(this.stepDelay(ctx.step), pause ?? 0);
+      // retried before the end of the current step. A login answered 429
+      // (too many attempts) moves to the next step: the account is being
+      // locked, the next attempt waits for the longer of the step and the
+      // lockout.
+      const lockedLogin = err?.status === 429 && err.account === true;
+      const step = lockedLogin ? ctx.step + 1 : ctx.step;
+      const delay = Math.max(
+        this.stepDelay(step),
+        pause ?? 0,
+        lockedLogin ? Math.min(err.retryAfterMs ?? 0, INTERVALS.BUSY_MAX_MS) : 0,
+      );
       await this.writeRefusal(ctx.baseKey, {
         key,
-        step: ctx.step,
+        step,
         until: now + delay,
         forced,
         terms: stored?.key === key ? stored.terms : false,
       });
-      return { kind: 'stepWait', step: ctx.step, delay };
+      return { kind: 'stepWait', step, delay };
     }
     // The retry wait goes to /data too: a failure answered during a
     // reconnection (or before a restart) is never read again sooner.
@@ -731,6 +766,11 @@ export class LibreApp {
 
   /** Attach the context of the reading to a failure and write its outcome to /data. */
   async fail(err, context, session) {
+    // The client was replaced: nothing LibreLinkUp said, nothing to keep.
+    if (err?.code === CODES.CLOSED) {
+      err.plan = { kind: 'retry' };
+      return err;
+    }
     if (err && typeof err === 'object') {
       // A refused login or terms to accept: the token is no longer used.
       if (isStop(err)) session.token = null;
@@ -807,22 +847,6 @@ export class LibreApp {
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
     const now = this.now();
-    for (const patient of followed) {
-      // A measurement dated more than a day ahead is no measurement (a
-      // phone or a sensor with a wrong clock).
-      const m =
-        patient.measurement && patient.measurement.timestampMs <= now + DAY
-          ? patient.measurement
-          : null;
-      patient.mgdl = m?.mgdl ?? null;
-      patient.trend = m?.trend ?? null;
-      patient.timestampMs = m?.timestampMs ?? null;
-      patient.age = m ? Math.max(0, now - m.timestampMs) : null;
-      delete patient.measurement;
-      if (patient.targetLowMgdl !== null) this.targets.add(patient.key);
-      patient.hasTargets = this.targets.has(patient.key);
-    }
-
     // A jump of the wall clock between two readings (NTP after a start with
     // a wrong clock): this reading is a new baseline, no event.
     const mono = this.monotonic();
@@ -831,6 +855,42 @@ export class LibreApp {
       Math.abs(now - this.lastClock.wall - (mono - this.lastClock.mono)) > CLOCK_JUMP_MS;
     if (jumped) this.logger.info('The clock jumped: no scene event at this reading');
     this.lastClock = { wall: now, mono };
+
+    let futureCount = 0;
+    for (const patient of followed) {
+      // A measurement dated more than a day ahead is no measurement (a
+      // phone or a sensor with a wrong clock).
+      const m =
+        patient.measurement && patient.measurement.timestampMs <= now + DAY
+          ? patient.measurement
+          : null;
+      delete patient.measurement;
+      if (m && m.timestampMs - now > FUTURE_MS) futureCount += 1;
+      // Not seen for a while (no reading, or not in the list): what "low"
+      // and "high" fired is forgotten, a low still there is told again.
+      const seen = this.lastSeen.get(patient.key);
+      if (seen !== undefined && mono - seen > GLUCOSE.FRESH_MS) this.alarms.delete(patient.key);
+      this.lastSeen.set(patient.key, mono);
+      const previous = this.lastMeasurement.get(patient.key);
+      if (m && m.timestampMs !== previous?.timestampMs) {
+        // A gap of more than 15 min between two measurements: a new episode.
+        if (previous && Math.abs(m.timestampMs - previous.timestampMs) > GLUCOSE.FRESH_MS) {
+          this.alarms.delete(patient.key);
+        }
+        this.lastMeasurement.set(patient.key, { timestampMs: m.timestampMs, firstSeen: mono });
+      }
+      const known = this.lastMeasurement.get(patient.key) ?? null;
+      patient.hasMeasurement = m !== null;
+      patient.mgdl = m?.mgdl ?? null;
+      patient.trend = m ? (m.trend ?? 0) : null;
+      // Without a measurement in this answer, the age goes on from the last
+      // one accepted (never a value, never "low" nor "high" from it).
+      patient.timestampMs = m?.timestampMs ?? known?.timestampMs ?? null;
+      patient.firstSeen = m ? known.firstSeen : null;
+      patient.age = patient.timestampMs === null ? null : Math.max(0, now - patient.timestampMs);
+      if (patient.targetLowMgdl !== null) this.targets.add(patient.key);
+      patient.hasTargets = this.targets.has(patient.key);
+    }
 
     /** [trigger, patient, threshold, reached]: events to fire (marked reached once sent). */
     const candidates = [];
@@ -841,7 +901,7 @@ export class LibreApp {
         if (age === null || age >= STALE[0] * MINUTE) staleCount += 1;
         if (age === null) continue;
         const created = createdKeys.has(patient.key);
-        this.checkAlarms(patient, created && !jumped, candidates);
+        if (patient.hasMeasurement) this.checkAlarms(patient, created && !jumped, mono, candidates);
         this.checkStale(patient, created, jumped, candidates);
       } catch (err) {
         this.logger.debug(`A patient was skipped: ${this.describe(err)}`);
@@ -850,6 +910,7 @@ export class LibreApp {
     this.devices = new Map(followed.map((patient) => [patient.key, patient]));
     this.capped = all.length - followed.length;
     this.staleCount = staleCount;
+    this.futureCount = futureCount;
     this.online = true;
     this.retryDelay = this.minRetry();
     this.retryWait = null;
@@ -881,16 +942,22 @@ export class LibreApp {
 
   /**
    * "Low" and "high": per patient and threshold, once per crossing. Only a
-   * fresh measurement (15 min at most, not in the future) of a patient
-   * created in Gladys fires, the first reading included (a low already there
-   * at start is told; after a restart of the container it may be told
-   * again). Armed again 5 mg/dL back inside the threshold. A patient not
-   * created records nothing: once created, a low still there is told.
+   * fresh measurement (15 min old at most, not in the future, first seen by
+   * the integration 15 min ago at most) of a patient created in Gladys
+   * fires, the first reading included (a low already there at start is
+   * told; after a restart of the container it may be told again). Armed
+   * again 5 mg/dL back inside the threshold, or when the patient was not
+   * seen for 15 min, or after a gap of 15 min between two measurements. A
+   * patient not created records nothing: once created, a low still there
+   * is told. The "target" threshold never fires without a target.
    */
-  checkAlarms(patient, canFire, candidates) {
+  checkAlarms(patient, canFire, mono, candidates) {
     const entry = this.alarms.get(patient.key) ?? { low: new Set(), high: new Set() };
     this.alarms.set(patient.key, entry);
-    const fresh = patient.age <= GLUCOSE.FRESH_MS && patient.timestampMs - this.now() <= FUTURE_MS;
+    const fresh =
+      patient.age <= GLUCOSE.FRESH_MS &&
+      patient.timestampMs - this.now() <= FUTURE_MS &&
+      mono - patient.firstSeen <= GLUCOSE.FRESH_MS;
     const value = patient.mgdl;
     const hyst = GLUCOSE.HYSTERESIS_MGDL;
     for (const threshold of LOW_THRESHOLDS) {
@@ -951,20 +1018,28 @@ export class LibreApp {
       total: this.devices.size + this.capped,
       stale: this.staleCount,
       capped: this.capped,
+      future: this.futureCount,
     });
   }
 
   /** A glucose value (mg/dL) in the unit of the configuration. */
   inUnit(mgdl) {
-    if (mgdl === null || mgdl === undefined) return null;
-    return this.config.unit === 'mmol' ? toMmol(mgdl) : Math.round(mgdl);
+    return inUnit(mgdl, this.config.unit);
+  }
+
+  /** The name of the device created in Gladys (renamed by the user), else the API's. */
+  createdName(patient) {
+    const id = deviceIds(this.gladys, patient.key).device;
+    const created = (this.gladys.devices ?? []).find((d) => d?.external_id === id);
+    const name = typeof created?.name === 'string' && created.name ? created.name : patient.name;
+    return cut(name, LIMITS.NAME_LENGTH);
   }
 
   /** Resolves true when the event left, false otherwise (never throws). */
   async fire(trigger, patient, threshold) {
     const common = {
       device: deviceIds(this.gladys, patient.key).device,
-      device_name: patient.name.slice(0, LIMITS.NAME_LENGTH),
+      device_name: this.createdName(patient),
       measured_at: formatDate(patient.timestampMs) ?? '',
     };
     const data =
@@ -1035,7 +1110,10 @@ export class LibreApp {
    */
   statesOf() {
     const groups = { measurement: [], targets: [] };
-    const keys = unitFeatures(this.config.unit);
+    // Every glucose and target feature the created device has gets its
+    // value, each in the unit of its key (the setting only chooses what
+    // Discovery offers).
+    const units = UNITS.map((unit) => [unit, unitFeatures(unit)]);
     for (const created of this.gladys.devices ?? []) {
       const patient = this.devices.get(this.keyOf(created));
       if (!patient) continue;
@@ -1049,7 +1127,7 @@ export class LibreApp {
       if (patient.age !== null) {
         groups.measurement.push(
           bundle(
-            state(keys.glucose, this.inUnit(patient.mgdl)),
+            ...units.map(([unit, keys]) => state(keys.glucose, inUnit(patient.mgdl, unit))),
             state(FEATURES.TREND, patient.trend),
             state(FEATURES.AGE, Math.min(1_000_000, Math.floor(patient.age / MINUTE))),
           ),
@@ -1057,8 +1135,10 @@ export class LibreApp {
       }
       groups.targets.push(
         bundle(
-          state(keys.low, this.inUnit(patient.targetLowMgdl)),
-          state(keys.high, this.inUnit(patient.targetHighMgdl)),
+          ...units.flatMap(([unit, keys]) => [
+            state(keys.low, inUnit(patient.targetLowMgdl, unit)),
+            state(keys.high, inUnit(patient.targetHighMgdl, unit)),
+          ]),
         ),
       );
     }

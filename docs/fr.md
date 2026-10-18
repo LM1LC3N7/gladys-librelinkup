@@ -49,12 +49,14 @@ Intégration non officielle, sans lien avec Abbott.
   en temps, quand le jeton de la session expire). Le capteur envoie une
   mesure environ toutes les minutes ; Abbott peut ralentir un compte qui
   lit trop souvent.
-- **Unité de glycémie** : mg/dL (par défaut) ou mmol/L, pour la glycémie et
-  les cibles dans Gladys. Le cœur de Gladys n’a pas d’unité de glycémie :
-  l’unité est écrite dans le nom de la fonction (`Glucose (mg/dL)`). La
-  changer ajoute des fonctions dans la nouvelle unité (mettez l’appareil à
-  jour depuis Découverte) ; les fonctions de l’ancienne unité restent mais
-  ne reçoivent plus de valeur. Les valeurs en mmol/L sont converties depuis
+- **Unité de glycémie** : mg/dL (par défaut) ou mmol/L : l’unité des
+  fonctions glycémie et cibles proposées par Découverte, et de la glycémie
+  transmise aux déclencheurs de scène. Le cœur de Gladys n’a pas d’unité
+  de glycémie : l’unité est écrite dans le nom de la fonction
+  (`Glucose (mg/dL)`) et dans sa clé. La changer ajoute des fonctions dans
+  la nouvelle unité (mettez l’appareil à jour depuis Découverte) ; chaque
+  fonction d’un appareil continue de recevoir ses valeurs, chacune dans sa
+  propre unité (supprimez celles dont vous ne voulez plus). Les valeurs en mmol/L sont converties depuis
   les mg/dL (÷ 18,0156, une décimale) : elles peuvent différer de 0,1 de
   l’application.
 
@@ -69,10 +71,18 @@ officiels LibreLinkUp qu’elle connaît (`api-eu.libreview.io`,
 ## Ce que montre chaque fonction
 
 - **Glycémie** (mg/dL ou mmol/L) : la dernière mesure du capteur.
-- **Tendance** (1 à 5) : 1 baisse rapide, 2 baisse, 3 stable, 4 hausse,
-  5 hausse rapide (la flèche de l’application). Non publiée si inconnue.
-- **Ancienneté de la mesure** (fonction « Measurement age », minutes) : l’âge de la dernière mesure,
-  d’après l’horloge du capteur, à chaque lecture.
+- **Tendance** (0 à 5) : 1 baisse rapide, 2 baisse, 3 stable, 4 hausse,
+  5 hausse rapide (la flèche de l’application) ; **0 quand l’API ne donne
+  pas de tendance** avec la mesure.
+- **Ancienneté de la mesure** (fonction « Measurement age », minutes) :
+  l’âge de la dernière mesure, d’après l’horloge du capteur, à chaque
+  lecture. Quand une réponse de LibreLinkUp n’a pas de mesure pour un
+  patient, l’âge **continue de compter** depuis la dernière mesure reçue
+  (glycémie et tendance gardent leur dernière valeur) : « Mesure trop
+  ancienne » peut alors se déclencher, jamais « basse » ni « haute ».
+- Une mesure datée dans le futur (plus de 5 minutes) ajoute un
+  avertissement dans l’état de l’intégration : vérifiez l’horloge de
+  Gladys.
 - **Cible basse / Cible haute** : la plage cible du compte (`targetLow` /
   `targetHigh` de l’API, lus en mg/dL : **à confirmer** sur un vrai
   compte). Ces fonctions n’apparaissent dans Découverte qu’une fois données
@@ -90,8 +100,13 @@ officiels LibreLinkUp qu’elle connaît (`api-eu.libreview.io`,
 et le seuil (**obligatoire**) : la cible du compte, ou 54 / 70 / 80 mg/dL
 (basse), 180 / 250 / 300 mg/dL (haute). La scène démarre quand une mesure
 **récente** (15 minutes au plus) passe sous (au-dessus de) ce seuil, à la
-lecture suivante. **Une fois par passage** : de nouveau seulement après une
-mesure revenue 5 mg/dL au-dessus (en dessous) du seuil. Une glycémie basse
+lecture suivante. Une mesure n’est récente que si l’intégration l’a vue
+pour la première fois il y a 15 minutes au plus. Le seuil « cible » ne se
+déclenche jamais pour un patient dont le compte ne donne pas de cible.
+**Une fois par passage** : de nouveau seulement après une mesure revenue
+5 mg/dL au-dessus (en dessous) du seuil, après une interruption de plus de
+15 minutes entre deux mesures, ou quand le patient n’a pas été lu depuis
+plus de 15 minutes. Une glycémie basse
 ou haute déjà là au démarrage de l’intégration est signalée à la première
 lecture (une alerte manquée est pire qu’une alerte répétée) : un
 redémarrage de l’intégration peut la signaler une fois de plus. Jamais pour
@@ -161,7 +176,11 @@ une notification) : elle va alors là où vos scènes l’envoient.
 L’identifiant externe d’un appareil est une empreinte non secrète de
 l’identifiant LibreLinkUp du patient (jamais l’identifiant lui-même). Le
 nom d’un appareil est le nom du patient tel que LibreLinkUp le donne :
-renommez-le dans Gladys si vous préférez.
+renommez-le dans Gladys si vous préférez (les déclencheurs de scène
+utilisent le nom de l’appareil dans Gladys). **Le nom et la glycémie vont
+partout où vont les noms et valeurs des appareils** : scènes,
+notifications, Gladys Plus, et les assistants et IA reliés à Gladys
+(Google Home, Alexa, MCP…).
 
 ## Limites
 

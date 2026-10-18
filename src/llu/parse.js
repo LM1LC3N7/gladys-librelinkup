@@ -60,14 +60,20 @@ export const plausibleMgdl = (value) => {
 export const toMmol = (mgdl) =>
   mgdl === null ? null : Math.round((mgdl / GLUCOSE.MG_PER_MMOL) * 10) / 10;
 
-/** The API's own JSON envelope: an object with a numeric `status`. */
-export function readEnvelope(body) {
+/** A JSON object of a body, or null. */
+export function readJson(body) {
   try {
     const value = JSON.parse(Buffer.isBuffer(body) ? body.toString('utf8') : String(body));
-    return isObject(value) && typeof value.status === 'number' ? value : null;
+    return isObject(value) ? value : null;
   } catch {
     return null;
   }
+}
+
+/** The API's own JSON envelope: an object with a numeric `status`. */
+export function readEnvelope(body) {
+  const value = readJson(body);
+  return value !== null && typeof value.status === 'number' ? value : null;
 }
 
 /** The step the API asks before anything else (`tou`, `pp`, `verifyEmail`...), or null. */
@@ -143,11 +149,20 @@ export function parseMeasurement(value) {
 }
 
 const PATIENT_ID = /^[0-9A-Za-z-]{1,64}$/;
-const cleanName = (value) =>
+/** Bidi marks, embeddings, overrides, isolates and zero-width characters (ASCII escapes). */
+const INVISIBLE = new RegExp('[\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2069\\ufeff]', 'g');
+/**
+ * A name for Gladys: control characters (C0, DEL, C1) become spaces; the
+ * bidirectional marks and overrides and the zero-width characters are
+ * removed (they could disguise a name); spaces are collapsed.
+ */
+export const cleanName = (value) =>
   typeof value === 'string'
     ? value
         // eslint-disable-next-line no-control-regex
-        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+        .replace(INVISIBLE, '')
+        .replace(/\s+/g, ' ')
         .trim()
     : '';
 

@@ -93,10 +93,12 @@ export function createFakeLibre({ now }) {
     headers: { 'content-type': 'application/json', ...headers },
     body: Buffer.from(JSON.stringify(value)),
   });
+  const expiries = new Map();
   const newToken = () => {
     const token = `token-${fake.tokens.length + 1}`;
     fake.tokens.push(token);
-    return { token, expires: Math.floor((now() + fake.tokenLifeMs) / 1000), duration: 1 };
+    expiries.set(token, Math.floor((now() + fake.tokenLifeMs) / 1000));
+    return { token, expires: expiries.get(token), duration: 1 };
   };
 
   function answer(url, options, headers) {
@@ -153,7 +155,7 @@ export function createFakeLibre({ now }) {
       }
       const ticket = fake.rotate
         ? newToken()
-        : { token: fake.tokens.at(-1), expires: Math.floor((now() + fake.tokenLifeMs) / 1000) };
+        : { token: fake.tokens.at(-1), expires: expiries.get(fake.tokens.at(-1)) };
       return json(200, { status: 0, data: fake.connections, ticket });
     }
     return { status: 404, headers: {}, body: Buffer.from('<html>Not found</html>') };

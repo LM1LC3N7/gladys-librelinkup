@@ -195,7 +195,86 @@ test('a device published again never loses a feature (unit changed)', async () =
   for (const key of ['glucose_mgdl', 'glucose_mmol', 'target_low_mmol', 'target_low_mgdl']) {
     assert.ok(keys.includes(key), key);
   }
-  assert.equal(last(gladys, ALICE, 'glucose_mmol'), undefined, 'the old unit gets nothing');
+  // Every feature the created device has gets its value, in the unit of its key.
+  assert.equal(last(gladys, ALICE, 'glucose_mmol'), 6.1, 'the created features keep their values');
+  assert.equal(last(gladys, ALICE, 'target_high_mmol'), 10);
+  assert.equal(last(gladys, ALICE, 'glucose_mgdl'), undefined, 'not created yet: nothing');
+});
+
+test('a device with the features of both units gets both values', async () => {
+  const mg = device(ALICE, 'Alice Martin', { hasTargets: true });
+  const mmol = device(ALICE, 'Alice Martin', { hasTargets: true }, 'mmol');
+  const both = { ...mg, features: [...mg.features, ...mmol.features.slice(0, 1)] };
+  const { gladys } = await setup({ created: [both] });
+  assert.equal(last(gladys, ALICE, 'glucose_mgdl'), 110);
+  assert.equal(last(gladys, ALICE, 'glucose_mmol'), 6.1);
+});
+
+test('a measurement missing from an answer: the age goes on, stale may fire, never low/high', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 - MIN, 110);
+  const { gladys, timers, clock } = await setup({ libre });
+  const alice = libre.connections.find((c) => c.patientId === ALICE);
+  clock.now += 2 * MIN;
+  alice.glucoseMeasurement = null;
+  await poll(timers);
+  assert.equal(last(gladys, ALICE, 'measurement_age'), 3, 'from the last measurement accepted');
+  assert.equal(last(gladys, ALICE, 'glucose_mgdl'), 110, 'the last value is kept, nothing new');
+  clock.now = T0 - MIN + 15 * MIN;
+  await poll(timers);
+  assert.deepEqual(
+    events(gladys).filter((e) => e[1] === 'Alice Martin'),
+    [[SCENE_TRIGGERS.MEASUREMENT_STALE, 'Alice Martin', '15']],
+  );
+  assert.ok(
+    !gladys.fake.sceneEvents.some((e) => e.key !== SCENE_TRIGGERS.MEASUREMENT_STALE),
+    'never low nor high without a measurement',
+  );
+});
+
+test('low told again after a gap of 15 min between measurements, or 15 min unseen', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 - MIN, 50);
+  const { gladys, timers, clock } = await setup({ libre });
+  const lows = () =>
+    gladys.fake.sceneEvents.filter((e) => e.key === SCENE_TRIGGERS.GLUCOSE_LOW).length;
+  assert.equal(lows(), 4);
+  clock.now += 20 * MIN;
+  libre.glucose(ALICE, clock.now - MIN, 50);
+  await poll(timers);
+  assert.equal(lows(), 8, 'a new episode');
+  // Alice absent from the list for 16 min, then back with a close measurement.
+  const alice = libre.connections.find((c) => c.patientId === ALICE);
+  libre.connections = libre.connections.filter((c) => c !== alice);
+  clock.now += 16 * MIN;
+  await poll(timers);
+  libre.connections.push(alice);
+  libre.glucose(ALICE, clock.now - MIN, 50);
+  clock.now += MIN;
+  await poll(timers);
+  assert.equal(lows(), 12, 'not seen for 15 min: told again');
+});
+
+test('a measurement dated in the future: the status asks to check the clock', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 + HOUR, 50);
+  const { gladys } = await setup({ libre });
+  assert.match(
+    gladys.fake.connectionStatus.message.en,
+    /1 measurement is dated in the future: check the clock of Gladys/,
+  );
+  assert.match(gladys.fake.connectionStatus.message.fr, /vérifiez l’horloge de Gladys/);
+  assert.equal(gladys.fake.sceneEvents.length, 0, 'never fresh');
+});
+
+test('unknown trend published as 0; events use the name of the created device', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 - MIN, 50, 0);
+  const renamed = { ...device(ALICE, 'Alice Martin', { hasTargets: true }), name: 'Maman' };
+  const { gladys } = await setup({ libre, created: [renamed] });
+  assert.equal(last(gladys, ALICE, 'trend'), 0);
+  assert.equal(gladys.fake.sceneEvents[0].data.device_name, 'Maman');
+  assert.equal(gladys.fake.sceneEvents[0].data.trend, 0);
 });
 
 test('glucose low: a fresh measurement fires once per crossing, armed again 5 mg/dL above', async () => {
@@ -347,13 +426,57 @@ test('refused credentials stop for 1 h, 6 h, 24 h, persisted; one forced attempt
   assert.doesNotMatch(storeText(dataDir), /"refusals": \{\s*"/, 'no refusal left');
 });
 
+test('a 4xx login with the JSON of the API is a refusal: one password sent, then 1 h, 6 h, 24 h', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.region = null;
+  const refused = { status: 400, body: { status: 2, error: { message: 'notAuthenticated' } } };
+  libre.failures.push(refused, { ...refused, status: 403 }, { ...refused, status: 401 });
+  const { gladys, timers, clock } = await setup({ libre });
+  assert.equal(libre.requests.filter((r) => r.body?.includes(PASSWORD)).length, 1);
+  assert.match(gladys.fake.connectionStatus.message.en, /refused the e-mail address/);
+  assert.deepEqual(timers.delays(), [HOUR]);
+  clock.now += HOUR;
+  await timers.run();
+  assert.deepEqual(timers.delays(), [6 * HOUR]);
+  clock.now += 6 * HOUR;
+  await timers.run();
+  assert.deepEqual(timers.delays(), [24 * HOUR]);
+  assert.equal(libre.logins().length, 3);
+});
+
+test('a 403 login page without the JSON of the API is not a refusal', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.failures.push({ status: 403, body: '<html>Forbidden</html>' });
+  const { gladys, timers } = await setup({ libre });
+  assert.match(gladys.fake.connectionStatus.message.en, /HTTP 403/);
+  assert.deepEqual(timers.delays(), [POLL]);
+});
+
+test('within a series, a login answered 429 moves to the next step (max of step and lockout)', async () => {
+  const { gladys, libre, timers, clock } = await setup({ config: { password: WRONG } });
+  assert.deepEqual(timers.delays(), [HOUR]);
+  libre.failures.push({
+    status: 200,
+    body: { status: 429, data: { code: 60, data: { failures: 5, lockout: 600 } } },
+  });
+  clock.now += HOUR;
+  await timers.run();
+  assert.match(gladys.fake.connectionStatus.message.en, /slow down/);
+  assert.deepEqual(timers.delays(), [6 * HOUR], 'step 2, not 1 h again');
+  clock.now += 6 * HOUR;
+  await timers.run();
+  assert.deepEqual(timers.delays(), [24 * HOUR], 'refused again: step 3');
+});
+
 test('an attempt in flight when the app stops counts as a refusal', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'librelinkup-app-'));
   const first = await setup({ config: { password: WRONG }, dataDir });
   first.clock.now = T0 + HOUR;
   first.libre.gate = new Promise(() => {});
+  const before = first.libre.requests.length;
   void first.timers.run();
-  for (let i = 0; i < 200 && !/\\"p\\":true/.test(storeText(dataDir)); i += 1) {
+  // The request leaves only once the pending attempt is written (renamed) to /data.
+  for (let i = 0; i < 400 && first.libre.requests.length === before; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   assert.match(storeText(dataDir), /\\"p\\":true/);
@@ -409,6 +532,17 @@ test('a region outside the fixed list is never followed', async () => {
   for (const r of libre.requests) assert.ok(ALLOWED_HOSTS.includes(r.host), r.host);
 });
 
+test('a region named like an inherited property is never followed', async () => {
+  for (const region of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+    const libre = createFakeLibre({ now: () => T0 });
+    libre.region = region;
+    const { gladys } = await setup({ libre });
+    assert.equal(libre.requests.length, 1, region);
+    assert.match(gladys.fake.connectionStatus.message.en, /outside the list of official/, region);
+    await running.stop();
+  }
+});
+
 test('a 401 to an old token: one login, then a 401 to the fresh token is a refusal', async () => {
   const { gladys, libre, timers } = await setup();
   // The token is revoked: the next round logs in once and reads.
@@ -435,9 +569,12 @@ test('a token about to expire is renewed by a login; a new ticket of the list is
   libre.tokenLifeMs = HOUR + 30 * MIN;
   const { libre: api, timers } = await setup({ libre, clock });
   assert.equal(api.logins().length, 2);
-  clock.now += 31 * MIN;
+  clock.now += 40 * MIN;
   await poll(timers);
-  assert.equal(api.logins().length, 3, 'within the margin of 1 h');
+  assert.equal(api.logins().length, 2, 'margin: half of a life of 1 h 30');
+  clock.now += 6 * MIN;
+  await poll(timers);
+  assert.equal(api.logins().length, 3, 'within the margin');
   api.rotate = true;
   api.tokenLifeMs = 180 * 24 * HOUR;
   await poll(timers);

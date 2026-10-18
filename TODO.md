@@ -31,6 +31,8 @@ up to date at the end of every milestone.
       pylibrelinkup's models) and loopback http servers.
       **Never tested with a real account.** No Docker on this PC: no e2e
       test in a container.
+- [x] **Review corrections** (2026-10-18, review of `0de4bfa`, 4 important
+      and 10 minor points): see "Decisions" (review corrections).
 - [ ] **Milestone 2 — real account** (a tester with a LibreLinkUp account
       following a sensor): record real answers as fixtures (names, ids,
       values, tokens removed), fix what differs. To check first:
@@ -49,6 +51,9 @@ up to date at the end of every milestone.
     the ticket;
   - how the API answers a list when new terms appear after the login (a
     `data.step` in the error body is assumed, any status);
+  - how fresh `glucoseMeasurement` of `/llu/connections` is, compared to
+    the newest point of `/llu/connections/<id>/graph` (if the list lags by
+    minutes, the age and the "fresh" window must take it into account);
   - whether `accept-encoding: gzip` is required (not sent: the answer is
     read uncompressed) and whether an honest user agent is accepted.
 - [ ] **Later, if users ask** (not now): the graph of the last 12 hours
@@ -193,5 +198,40 @@ s: step, u: end, p: pending, f: forced, t: terms }` under a salted digest
   in the reading, `unreachable` otherwise. `transports: ["cloud"]`.
 - `gladys_version >=5.1.0` (scene triggers). Category `services`. No
   `location: true`.
+- **Review corrections of `0de4bfa`** (they override the items above where
+  they differ):
+  - (I1) every glucose and target feature a created device has gets its
+    value, each in the unit of its key; the `glucose_unit` setting only
+    chooses the features Discovery offers (and the unit of the glucose in
+    the scene events);
+  - (I2) the date of the last measurement accepted is kept in memory: an
+    answer without a measurement publishes the age from it and runs the
+    stale trigger, never low nor high (glucose and trend keep their last
+    value);
+  - (I3) a 4xx (but 429) of the login carrying the API's JSON (`status: 2`
+    or an `error` object) is a refusal (the ladder at once, the password
+    sent once); a 4xx page without it stays a passing failure;
+  - (I4) within a series of stops, a login answered 429 (locked) moves to
+    the next step, waiting max(step, lockout capped at 6 h);
+  - (M1) an unknown trend is published as 0 (feature min 0);
+  - (M2) the fired low / high thresholds of a patient are forgotten when it
+    was not seen for 15 min (monotonic clock) or after a gap of 15 min
+    between two measurements;
+  - (M3) a measurement dated more than 5 min ahead adds "check the clock of
+    Gladys" to the status; a measurement is fresh only if first seen 15 min
+    ago at most (monotonic);
+  - (M4) `CODES.CLOSED` (client replaced) is never written to `/data`;
+  - (M5) regions looked up with `Object.hasOwn` (never an inherited name);
+  - (M6) token margin = min(1 h, half of its life);
+  - (M7) `device_name` of the events = the name of the created device in
+    Gladys (renamed by the user), else the API's;
+  - (M8) docs and manifest: the "target" threshold never fires without a
+    target, "lecture seule" in the French catalog description, the age
+    goes on without a measurement, the name and the glucose go wherever
+    device names and values go (scenes, notifications, Gladys Plus,
+    connected assistants and AI);
+  - (M9) names lose C0 / C1 controls, bidi marks and zero-width
+    characters; cut without breaking a surrogate pair;
+  - (M10) the freshness of the list against `/graph` added to milestone 2.
 - **Dates**: every date shown is UTC; `test/timezone.test.js` runs
   `test/app.test.js` again with TZ=Europe/Lisbon and TZ=Europe/Helsinki.

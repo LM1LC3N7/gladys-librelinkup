@@ -44,11 +44,13 @@ Unofficial integration, not affiliated with Abbott.
   request per reading (a login now and then, when the token of the session
   expires). The sensor sends a measurement about every minute; Abbott may
   slow down an account that reads too often.
-- **Glucose unit**: mg/dL (by default) or mmol/L, for the glucose and the
-  targets in Gladys. The core of Gladys has no glucose unit: the unit is
-  written in the name of the feature (`Glucose (mg/dL)`). Changing it adds
-  features in the new unit (update the device from Discovery); the features
-  of the old unit stay but no longer receive values. mmol/L values are
+- **Glucose unit**: mg/dL (by default) or mmol/L: the unit of the glucose
+  and target features that Discovery offers, and of the glucose handed to
+  the scene triggers. The core of Gladys has no glucose unit: the unit is
+  written in the name of the feature (`Glucose (mg/dL)`) and in its key.
+  Changing it adds features in the new unit (update the device from
+  Discovery); every feature a device has keeps receiving its values, each
+  in its own unit (you may delete the ones you no longer want). mmol/L values are
   converted from mg/dL (÷ 18.0156, one decimal): they may differ by 0.1
   from what the app shows.
 
@@ -63,10 +65,16 @@ etc.), never to a host given by an answer.
 ## What each feature shows
 
 - **Glucose** (mg/dL or mmol/L): the latest measurement of the sensor.
-- **Trend** (1 to 5): 1 falling fast, 2 falling, 3 stable, 4 rising, 5
-  rising fast (the arrow of the app). Not published when unknown.
+- **Trend** (0 to 5): 1 falling fast, 2 falling, 3 stable, 4 rising, 5
+  rising fast (the arrow of the app); **0 when the API gives no trend**
+  with the measurement.
 - **Measurement age** (minutes): how old the latest measurement is, from
-  the clock of the sensor, at each reading.
+  the clock of the sensor, at each reading. When an answer of LibreLinkUp
+  has no measurement for a patient, the age **keeps counting** from the
+  last measurement received (glucose and trend keep their last value):
+  "Measurement too old" can then fire, never "low" nor "high".
+- A measurement dated in the future (more than 5 minutes) adds a warning
+  to the status of the integration: check the clock of Gladys.
 - **Target low / Target high**: the target range of the account (the API's
   `targetLow` / `targetHigh`, read as mg/dL: **to be confirmed** on a real
   account). The features appear in Discovery only once the API gave them
@@ -83,8 +91,12 @@ etc.), never to a host given by an answer.
 threshold (**required**): the target of the account, or 54 / 70 / 80 mg/dL
 (low), 180 / 250 / 300 mg/dL (high). The scene starts when a **fresh**
 measurement (15 minutes old at most) is below (above) it, at the next
-reading. **Once per crossing**: again only after a measurement 5 mg/dL
-back above (below) the threshold. A low or high already there when the
+reading. A measurement counts as fresh only if the integration first saw
+it 15 minutes ago at most. The "target" threshold never fires for a
+patient whose account gives no target. **Once per crossing**: again only
+after a measurement 5 mg/dL back above (below) the threshold, after a gap
+of more than 15 minutes between two measurements, or when the patient was
+not read for more than 15 minutes. A low or high already there when the
 integration starts is told at the first reading (a missing alert is worse
 than a repeated one): a restart of the integration may tell it once more.
 Never for an older measurement, nor at a reading where the clock of Gladys
@@ -145,7 +157,10 @@ scene triggers hand the glucose to your scenes (to write a notification):
 it is then where your scenes send it. The external id of a device is a
 non-secret digest of the LibreLinkUp id of the patient (never the id
 itself). The name of a device is the name of the patient as LibreLinkUp
-gives it: rename it in Gladys if you prefer.
+gives it: rename it in Gladys if you prefer (the scene triggers use the
+name of the device in Gladys). **The name and the glucose go wherever the
+names and values of devices go**: scenes, notifications, Gladys Plus, and
+the assistants and AI connected to Gladys (Google Home, Alexa, MCP...).
 
 ## Limits
 

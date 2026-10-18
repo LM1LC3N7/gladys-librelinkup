@@ -31,3 +31,22 @@ the notes of the version's GitHub Release.
   credentials stop for 1 h, then 6 h, then 24 h, kept in `/data`; HTTP 429,
   a locked login and 5xx pause every request, bounded and kept in `/data`.
 - Button "Test the connection".
+
+### Changed (review before the first release)
+
+- Every glucose and target feature of a device receives its value, each in
+  its own unit; the unit setting only chooses what Discovery offers.
+- When an answer has no measurement, the measurement age keeps counting
+  and "Measurement too old" can fire (never "low" nor "high").
+- A login refused with an HTTP 4xx error of the API is a refusal at once;
+  a login locked during a series of refusals moves to the next, longer
+  stop.
+- Unknown trend published as 0; a measurement dated in the future adds a
+  warning to the status; "low" / "high" are told again after 15 minutes
+  without the patient or between two measurements, and only for a
+  measurement first seen 15 minutes ago at most.
+- Scene events use the name of the device in Gladys; patient names lose
+  invisible and direction characters.
+- The token is renewed at half of its life when it is short.
+- Docs: the "target" threshold, the age without measurement, where names
+  and glucose values go.

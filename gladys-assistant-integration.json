@@ -4,7 +4,7 @@
   "name": "LibreLinkUp",
   "description": {
     "en": "Glucose of the FreeStyle Libre sensors shared with LibreLinkUp, read only. Not a medical device.",
-    "fr": "Glycémie des capteurs FreeStyle Libre partagés par LibreLinkUp. Pas un dispositif médical."
+    "fr": "Glycémie FreeStyle Libre partagée par LibreLinkUp, en lecture seule. Pas un dispositif médical."
   },
   "version": "0.1.0",
   "docker_image": "ghcr.io/lm1lc3n7/gladys-librelinkup:0.1.0",
@@ -72,8 +72,8 @@
       "type": "select",
       "label": { "en": "Glucose unit", "fr": "Unité de glycémie" },
       "description": {
-        "en": "The unit of the glucose and of the targets in Gladys. Changing it adds features in the new unit (update the device from Discovery); the old ones stop receiving values.",
-        "fr": "L’unité de la glycémie et des cibles dans Gladys. La changer ajoute des fonctions dans la nouvelle unité (mettez l’appareil à jour depuis Découverte) ; les anciennes ne reçoivent plus de valeur."
+        "en": "The unit of the glucose and target features that Discovery offers, and of the glucose of the scene triggers. Changing it adds features in the new unit (update the device from Discovery); every feature a device has keeps receiving its values, each in its own unit.",
+        "fr": "L’unité des fonctions glycémie et cibles proposées par Découverte, et de la glycémie des déclencheurs de scène. La changer ajoute des fonctions dans la nouvelle unité (mettez l’appareil à jour depuis Découverte) ; chaque fonction d’un appareil continue de recevoir ses valeurs, chacune dans sa propre unité."
       },
       "required": true,
       "default": "mgdl",
@@ -99,8 +99,8 @@
       "key": "glucose_low",
       "label": { "en": "Glucose low", "fr": "Glycémie basse" },
       "description": {
-        "en": "A new measurement (15 min old at most) of a patient created in Gladys is below the chosen threshold. Once per crossing: again only after a measurement 5 mg/dL above it. Read at the chosen refresh: may be late or missing, never a medical alarm.",
-        "fr": "Une nouvelle mesure (15 min au plus) d’un patient créé dans Gladys est sous le seuil choisi. Une fois par passage : de nouveau seulement après une mesure 5 mg/dL au-dessus. Lu au rythme du rafraîchissement : peut être en retard ou manquer, jamais une alarme médicale."
+        "en": "A new measurement (15 min old at most) of a patient created in Gladys is below the chosen threshold (“target”: never for a patient without a target). Once per crossing: again only after a measurement 5 mg/dL above it, or a gap of 15 min. Read at the chosen refresh: may be late or missing, never a medical alarm.",
+        "fr": "Une nouvelle mesure (15 min au plus) d’un patient créé dans Gladys est sous le seuil choisi (« cible » : jamais pour un patient sans cible). Une fois par passage : de nouveau seulement après une mesure 5 mg/dL au-dessus, ou une interruption de 15 min. Lu au rythme du rafraîchissement : peut être en retard ou manquer, jamais une alarme médicale."
       },
       "fields": [
         {
@@ -142,7 +142,7 @@
         {
           "key": "trend",
           "type": "number",
-          "label": { "en": "Trend (1 to 5)", "fr": "Tendance (1 à 5)" }
+          "label": { "en": "Trend (1 to 5, 0 unknown)", "fr": "Tendance (1 à 5, 0 inconnue)" }
         },
         {
           "key": "measured_at",
@@ -155,8 +155,8 @@
       "key": "glucose_high",
       "label": { "en": "Glucose high", "fr": "Glycémie haute" },
       "description": {
-        "en": "A new measurement (15 min old at most) of a patient created in Gladys is above the chosen threshold. Once per crossing: again only after a measurement 5 mg/dL below it. Read at the chosen refresh: may be late or missing, never a medical alarm.",
-        "fr": "Une nouvelle mesure (15 min au plus) d’un patient créé dans Gladys est au-dessus du seuil choisi. Une fois par passage : de nouveau seulement après une mesure 5 mg/dL en dessous. Lu au rythme du rafraîchissement : peut être en retard ou manquer, jamais une alarme médicale."
+        "en": "A new measurement (15 min old at most) of a patient created in Gladys is above the chosen threshold (“target”: never for a patient without a target). Once per crossing: again only after a measurement 5 mg/dL below it, or a gap of 15 min. Read at the chosen refresh: may be late or missing, never a medical alarm.",
+        "fr": "Une nouvelle mesure (15 min au plus) d’un patient créé dans Gladys est au-dessus du seuil choisi (« cible » : jamais pour un patient sans cible). Une fois par passage : de nouveau seulement après une mesure 5 mg/dL en dessous, ou une interruption de 15 min. Lu au rythme du rafraîchissement : peut être en retard ou manquer, jamais une alarme médicale."
       },
       "fields": [
         {
@@ -198,7 +198,7 @@
         {
           "key": "trend",
           "type": "number",
-          "label": { "en": "Trend (1 to 5)", "fr": "Tendance (1 à 5)" }
+          "label": { "en": "Trend (1 to 5, 0 unknown)", "fr": "Tendance (1 à 5, 0 inconnue)" }
         },
         {
           "key": "measured_at",
