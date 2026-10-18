@@ -1,0 +1,594 @@
+// -----------------------------------------------------------------------------
+// The integration against the SDK's fake Gladys and the fake LibreLinkUp API,
+// through the exact wiring of the container (src/handlers.js).
+// -----------------------------------------------------------------------------
+
+import { afterEach, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
+import { LibreApp } from '../src/app.js';
+import { ACTIONS, ALLOWED_HOSTS, INTERVALS, SCENE_TRIGGERS } from '../src/constants.js';
+import { buildDevice, patientKey } from '../src/devices.js';
+import { registerHandlers } from '../src/handlers.js';
+import {
+  ALICE,
+  BOB,
+  EMAIL,
+  PASSWORD,
+  USER_ID,
+  connection,
+  createFakeLibre,
+  measurement,
+} from './helpers/fakeLibre.js';
+import { createFakeTimers } from './helpers/fakeTimers.js';
+
+const T0 = Date.parse('2026-10-18T08:00:00Z');
+const MIN = 60_000;
+const HOUR = 3600_000;
+const POLL = 120_000;
+const SELECTOR = 'librelinkup';
+const ids = createFakeGladys({ selector: SELECTOR });
+const BASE_CONFIG = { email: EMAIL, password: PASSWORD };
+const WRONG = 'not-the-password';
+const device = (id, name, options = {}, unit = 'mgdl') =>
+  buildDevice(ids, { key: patientKey(id), name, ...options }, unit);
+const featureId = (id, feature) => `ext:${SELECTOR}:patient:${patientKey(id)}:${feature}`;
+const deviceId = (id) => `ext:${SELECTOR}:patient:${patientKey(id)}`;
+
+let running;
+afterEach(async () => {
+  await running?.stop();
+  running = undefined;
+});
+
+async function setup({
+  config = {},
+  created = [device(ALICE, 'Alice Martin', { hasTargets: true }), device(BOB, 'Bob Durand')],
+  libre,
+  dataDir,
+  now = T0,
+  clock = { now, jump: 0 },
+} = {}) {
+  libre ??= createFakeLibre({ now: () => clock.now });
+  const gladys = createFakeGladys({
+    selector: SELECTOR,
+    config: { ...BASE_CONFIG, ...config },
+    devices: created,
+  });
+  const timers = createFakeTimers();
+  const logs = [];
+  const logger = Object.fromEntries(
+    ['debug', 'info', 'warn', 'error'].map((level) => [
+      level,
+      (...args) => logs.push(`${level} ${args.map((a) => a?.stack ?? String(a)).join(' ')}`),
+    ]),
+  );
+  dataDir ??= mkdtempSync(join(tmpdir(), 'librelinkup-app-'));
+  const app = new LibreApp({
+    gladys,
+    logger,
+    request: libre.request,
+    dataDir,
+    now: () => clock.now,
+    monotonic: () => clock.now - clock.jump,
+    timers,
+  });
+  running = app;
+  registerHandlers(gladys, app, logger);
+  await gladys.connect();
+  return { gladys, libre, timers, clock, logs, app, dataDir };
+}
+
+const poll = (timers, ms = POLL) => timers.run((delay) => delay === ms);
+const last = (gladys, id, feature) => gladys.fake.lastState(featureId(id, feature));
+const storeText = (dataDir) =>
+  readdirSync(dataDir)
+    .map((file) => {
+      // A write in flight renames its temporary file: read what is there.
+      try {
+        return readFileSync(join(dataDir, file), 'utf8');
+      } catch {
+        return '';
+      }
+    })
+    .join('\n');
+/** Emit `connected` again (Gladys came back) and wait for the restart. */
+async function reconnect(gladys, app) {
+  gladys.emit('connected');
+  for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  await app.queue;
+}
+const events = (gladys) =>
+  gladys.fake.sceneEvents.map((e) => [
+    e.key,
+    e.data.device_name,
+    e.data.threshold ?? e.data.minutes,
+  ]);
+
+test('start: login with the region, status, Discovery, every value; one request per round', async () => {
+  const { gladys, libre, timers } = await setup();
+  assert.deepEqual(gladys.fake.connectionStatus, {
+    connected: true,
+    message: {
+      en: 'LibreLinkUp answers: 2 patients, 0 without a measurement for 15 min or more.',
+      fr: 'LibreLinkUp répond : 2 patients, 0 sans mesure depuis 15 min ou plus.',
+    },
+  });
+  // The global host, its redirect to the region of the account, the list.
+  assert.deepEqual(
+    libre.requests.map((r) => [r.method, r.host, r.path]),
+    [
+      ['POST', 'api.libreview.io', '/llu/auth/login'],
+      ['POST', 'api-eu.libreview.io', '/llu/auth/login'],
+      ['GET', 'api-eu.libreview.io', '/llu/connections'],
+    ],
+  );
+  const [login, , list] = libre.requests;
+  assert.deepEqual(JSON.parse(login.body), { email: EMAIL, password: PASSWORD });
+  assert.equal(login.headers.authorization, undefined);
+  assert.equal(login.headers.product, 'llu.android');
+  assert.equal(login.headers.version, '4.16.0');
+  assert.match(login.headers['user-agent'], /^gladys-librelinkup\/0\.1\.0$/);
+  assert.equal(list.headers.authorization, 'Bearer token-1');
+  assert.equal(list.headers['account-id'], createHash('sha256').update(USER_ID).digest('hex'));
+  assert.equal(list.body, undefined);
+  assert.deepEqual(
+    gladys.fake.discoveredDevices.map((d) => [d.external_id, d.name, d.model]),
+    [
+      [deviceId(ALICE), 'Alice Martin', 'LibreLinkUp patient'],
+      [deviceId(BOB), 'Bob Durand', 'LibreLinkUp patient'],
+    ],
+  );
+  const [alice, bob] = gladys.fake.discoveredDevices;
+  assert.ok(alice.features.some((f) => f.external_id.endsWith(':target_low_mgdl')));
+  assert.ok(!bob.features.some((f) => f.external_id.includes(':target_')), 'no target given');
+  assert.ok(
+    alice.features.every((f) => f.keep_history === false),
+    'no history by default',
+  );
+  assert.equal(last(gladys, ALICE, 'glucose_mgdl'), 110);
+  assert.equal(last(gladys, ALICE, 'trend'), 3);
+  assert.equal(last(gladys, ALICE, 'measurement_age'), 1);
+  assert.equal(last(gladys, ALICE, 'target_low_mgdl'), 70);
+  assert.equal(last(gladys, ALICE, 'target_high_mgdl'), 180);
+  assert.equal(last(gladys, BOB, 'glucose_mgdl'), 150);
+  assert.equal(last(gladys, BOB, 'trend'), 4);
+  assert.equal(last(gladys, BOB, 'measurement_age'), 2);
+  assert.ok(gladys.fake.transports.every((t) => t.transport === 'cloud'));
+  assert.equal(gladys.fake.sceneEvents.length, 0);
+  assert.deepEqual(timers.delays(), [POLL]);
+  // The next rounds: the token is kept, one request each.
+  await poll(timers);
+  await poll(timers);
+  assert.equal(libre.logins().length, 2);
+  assert.equal(libre.lists().length, 3);
+  assert.deepEqual(timers.delays(), [POLL]);
+});
+
+test('mmol/L: features of that unit, values converted, one decimal', async () => {
+  const created = [device(ALICE, 'Alice Martin', { hasTargets: true }, 'mmol')];
+  const { gladys } = await setup({ config: { glucose_unit: 'mmol' }, created });
+  const [alice] = gladys.fake.discoveredDevices;
+  const keys = alice.features.map((f) => f.external_id.split(':').at(-1));
+  assert.deepEqual(keys, [
+    'glucose_mmol',
+    'trend',
+    'measurement_age',
+    'target_low_mmol',
+    'target_high_mmol',
+  ]);
+  assert.match(alice.features[0].name, /\(mmol\/L\)$/);
+  assert.equal(last(gladys, ALICE, 'glucose_mmol'), 6.1);
+  assert.equal(last(gladys, ALICE, 'target_low_mmol'), 3.9);
+  assert.equal(last(gladys, ALICE, 'target_high_mmol'), 10);
+});
+
+test('a device published again never loses a feature (unit changed)', async () => {
+  const created = [device(ALICE, 'Alice Martin', { hasTargets: true }, 'mmol')];
+  const { gladys } = await setup({ created });
+  const [alice] = gladys.fake.discoveredDevices;
+  const keys = alice.features.map((f) => f.external_id.split(':').at(-1));
+  for (const key of ['glucose_mgdl', 'glucose_mmol', 'target_low_mmol', 'target_low_mgdl']) {
+    assert.ok(keys.includes(key), key);
+  }
+  assert.equal(last(gladys, ALICE, 'glucose_mmol'), undefined, 'the old unit gets nothing');
+});
+
+test('glucose low: a fresh measurement fires once per crossing, armed again 5 mg/dL above', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 - MIN, 65);
+  const { gladys, timers, clock } = await setup({ libre });
+  // The first reading tells a fresh low (decision: a missing alert is worse).
+  assert.deepEqual(events(gladys), [
+    [SCENE_TRIGGERS.GLUCOSE_LOW, 'Alice Martin', 'target'],
+    [SCENE_TRIGGERS.GLUCOSE_LOW, 'Alice Martin', '70'],
+    [SCENE_TRIGGERS.GLUCOSE_LOW, 'Alice Martin', '80'],
+  ]);
+  const event = gladys.fake.sceneEvents[0];
+  assert.equal(event.data.device, deviceId(ALICE));
+  assert.equal(event.data.glucose, 65);
+  assert.equal(event.data.unit, 'mg/dL');
+  assert.equal(event.data.measured_at, '2026-10-18 07:59 UTC');
+  // Still low: nothing more.
+  clock.now += POLL;
+  libre.glucose(ALICE, clock.now - MIN, 60);
+  await poll(timers);
+  assert.equal(gladys.fake.sceneEvents.length, 3);
+  // 72 (< 70 + 5): not armed again for 70; above 80 + 5: everything armed.
+  clock.now += POLL;
+  libre.glucose(ALICE, clock.now - MIN, 72);
+  await poll(timers);
+  clock.now += POLL;
+  libre.glucose(ALICE, clock.now - MIN, 68);
+  await poll(timers);
+  assert.equal(gladys.fake.sceneEvents.length, 3, 'within the hysteresis');
+  clock.now += POLL;
+  libre.glucose(ALICE, clock.now - MIN, 90);
+  await poll(timers);
+  clock.now += POLL;
+  libre.glucose(ALICE, clock.now - MIN, 50);
+  await poll(timers);
+  assert.equal(gladys.fake.sceneEvents.length, 7, 'target, 54, 70, 80 again');
+  assert.equal(gladys.fake.sceneEvents.at(-1).data.glucose, 50);
+});
+
+test('glucose low / high: never for an old measurement, nor for a patient not created', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 - 20 * MIN, 50);
+  libre.glucose(BOB, T0 - MIN, 300);
+  const { gladys, timers, clock } = await setup({
+    libre,
+    created: [device(ALICE, 'Alice Martin', { hasTargets: true })],
+  });
+  assert.equal(gladys.fake.sceneEvents.length, 0, '20 min old; Bob not created');
+  clock.now += POLL;
+  libre.glucose(ALICE, clock.now - MIN, 260);
+  await poll(timers);
+  assert.deepEqual(events(gladys), [
+    [SCENE_TRIGGERS.GLUCOSE_HIGH, 'Alice Martin', 'target'],
+    [SCENE_TRIGGERS.GLUCOSE_HIGH, 'Alice Martin', '180'],
+    [SCENE_TRIGGERS.GLUCOSE_HIGH, 'Alice Martin', '250'],
+  ]);
+});
+
+test('the same low measurement read again, or a reconnection, never fires twice', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 - MIN, 50);
+  const { gladys, timers, clock, app } = await setup({ libre });
+  const sent = gladys.fake.sceneEvents.length;
+  assert.equal(sent, 4, 'target, 54, 70, 80');
+  clock.now += POLL;
+  await poll(timers);
+  await reconnect(gladys, app);
+  assert.equal(gladys.fake.sceneEvents.length, sent, 'the memory survives a reconnection');
+});
+
+test('measurement too old: never at the first reading, once per threshold, re-armed by news', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 - 20 * MIN, 110);
+  const { gladys, timers, clock } = await setup({ libre });
+  assert.equal(gladys.fake.sceneEvents.length, 0, '15 min already reached at start');
+  assert.match(gladys.fake.connectionStatus.message.en, /1 without a measurement/);
+  clock.now = T0 - 20 * MIN + 30 * MIN;
+  await poll(timers);
+  assert.deepEqual(events(gladys), [[SCENE_TRIGGERS.MEASUREMENT_STALE, 'Alice Martin', '30']]);
+  assert.equal(gladys.fake.sceneEvents[0].data.stale_for, 30);
+  clock.now += 2 * MIN;
+  await poll(timers);
+  assert.equal(gladys.fake.sceneEvents.length, 1, 'once');
+  // A new measurement: the wait is over; 15 min later, it fires again.
+  libre.glucose(ALICE, clock.now - MIN, 112);
+  await poll(timers);
+  assert.equal(last(gladys, ALICE, 'measurement_age'), 1);
+  clock.now += 15 * MIN;
+  await poll(timers);
+  assert.deepEqual(
+    events(gladys).filter((e) => e[1] === 'Alice Martin'),
+    [
+      [SCENE_TRIGGERS.MEASUREMENT_STALE, 'Alice Martin', '30'],
+      [SCENE_TRIGGERS.MEASUREMENT_STALE, 'Alice Martin', '15'],
+    ],
+  );
+});
+
+test('no scene event at a reading after a clock jump', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  const { gladys, timers, clock } = await setup({ libre });
+  clock.now += 2 * HOUR;
+  clock.jump = 2 * HOUR - POLL;
+  libre.glucose(ALICE, clock.now - MIN, 40);
+  await poll(timers);
+  assert.equal(gladys.fake.sceneEvents.length, 0);
+  clock.now += POLL;
+  libre.glucose(ALICE, clock.now - MIN, 41);
+  await poll(timers);
+  assert.ok(gladys.fake.sceneEvents.length > 0, 'the next reading tells it');
+});
+
+test('refused credentials stop for 1 h, 6 h, 24 h, persisted; one forced attempt per series', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'librelinkup-app-'));
+  const { gladys, libre, timers, app } = await setup({ config: { password: WRONG }, dataDir });
+  assert.equal(libre.requests.length, 2, 'global host, then the region');
+  assert.equal(gladys.fake.connectionStatus.connected, false);
+  assert.match(gladys.fake.connectionStatus.message.en, /refused the e-mail address/);
+  assert.match(gladys.fake.connectionStatus.message.en, /stops for 1 h/);
+  assert.match(gladys.fake.connectionStatus.message.fr, /a refusé l’adresse e-mail/);
+  assert.deepEqual(timers.delays(), [HOUR]);
+  await reconnect(gladys, app);
+  assert.match(gladys.fake.connectionStatus.message.en, /refused these credentials earlier/);
+  const ack = await gladys.fake.action(ACTIONS.TEST);
+  assert.equal(ack.success, false);
+  assert.equal(libre.requests.length, 2, 'nothing sent');
+  await running.stop();
+  const second = await setup({ config: { password: WRONG }, dataDir, libre, now: T0 + 10 * MIN });
+  assert.equal(libre.requests.length, 2, 'a restart sends nothing');
+  assert.deepEqual(second.timers.delays(), [50 * MIN]);
+  second.clock.now = T0 + HOUR;
+  await second.timers.run();
+  assert.equal(libre.logins().length, 4, 'a new process: the global host again');
+  assert.deepEqual(second.timers.delays(), [6 * HOUR]);
+  second.clock.now += 6 * HOUR;
+  await second.timers.run();
+  assert.equal(libre.logins().length, 5, 'the region is known now: one login');
+  assert.deepEqual(second.timers.delays(), [24 * HOUR]);
+  // Saving the same credentials: one attempt at once, then never again in this series.
+  await second.gladys.fake.configUpdated({ ...BASE_CONFIG, password: WRONG });
+  assert.equal(libre.logins().length, 6);
+  await second.gladys.fake.configUpdated({ ...BASE_CONFIG, password: WRONG });
+  assert.equal(libre.logins().length, 6);
+  assert.match(second.gladys.fake.connectionStatus.message.en, /Already tried again/);
+  // The right password works at once and the stop is forgotten.
+  await second.gladys.fake.configUpdated({ ...BASE_CONFIG });
+  assert.equal(second.gladys.fake.connectionStatus.connected, true);
+  assert.doesNotMatch(storeText(dataDir), /"refusals": \{\s*"/, 'no refusal left');
+});
+
+test('an attempt in flight when the app stops counts as a refusal', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'librelinkup-app-'));
+  const first = await setup({ config: { password: WRONG }, dataDir });
+  first.clock.now = T0 + HOUR;
+  first.libre.gate = new Promise(() => {});
+  void first.timers.run();
+  for (let i = 0; i < 200 && !/\\"p\\":true/.test(storeText(dataDir)); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.match(storeText(dataDir), /\\"p\\":true/);
+  await running.stop();
+  const libre = createFakeLibre({ now: () => T0 + HOUR });
+  const second = await setup({ config: { password: WRONG }, dataDir, libre, now: T0 + HOUR });
+  assert.equal(libre.requests.length, 0);
+  assert.deepEqual(second.timers.delays(), [6 * HOUR], 'one more step');
+});
+
+test('terms of use to accept: a stop that invites to accept them in the app, never accepted here', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.step = 'tou';
+  const { gladys, timers } = await setup({ libre });
+  assert.equal(gladys.fake.connectionStatus.connected, false);
+  assert.match(
+    gladys.fake.connectionStatus.message.en,
+    /accept the new terms of use: open the LibreLinkUp app/,
+  );
+  assert.match(
+    gladys.fake.connectionStatus.message.fr,
+    /accepter les nouvelles conditions d’utilisation/,
+  );
+  assert.deepEqual(timers.delays(), [HOUR]);
+  assert.ok(
+    libre.requests.every((r) => r.path === '/llu/auth/login'),
+    'no other endpoint: nothing accepted, no list read with that token',
+  );
+  // Accepted in the app, the configuration saved: read at once.
+  libre.step = null;
+  await gladys.fake.configUpdated({ ...BASE_CONFIG });
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('privacy policy step: its own words; restart keeps the stop and says why', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'librelinkup-app-'));
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.step = 'pp';
+  const { gladys } = await setup({ libre, dataDir });
+  assert.match(gladys.fake.connectionStatus.message.en, /privacy policy/);
+  await running.stop();
+  const second = await setup({ libre, dataDir, now: T0 + MIN });
+  assert.match(second.gladys.fake.connectionStatus.message.en, /accept new terms in its app/);
+});
+
+test('a region outside the fixed list is never followed', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.region = 'evil.example.org';
+  const { gladys, timers } = await setup({ libre });
+  assert.equal(libre.requests.length, 1);
+  assert.match(gladys.fake.connectionStatus.message.en, /outside the list of official/);
+  assert.deepEqual(timers.delays(), [POLL]);
+  for (const r of libre.requests) assert.ok(ALLOWED_HOSTS.includes(r.host), r.host);
+});
+
+test('a 401 to an old token: one login, then a 401 to the fresh token is a refusal', async () => {
+  const { gladys, libre, timers } = await setup();
+  // The token is revoked: the next round logs in once and reads.
+  libre.tokens.push('token-revoked');
+  await poll(timers);
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.equal(libre.logins().length, 3);
+  assert.equal(libre.lists().length, 3);
+  // Two 401 in a row (old, then fresh token): refused, never a loop.
+  libre.failures.push(
+    { status: 401, path: '/llu/connections' },
+    { status: 401, path: '/llu/connections' },
+  );
+  await poll(timers);
+  assert.equal(libre.logins().length, 4);
+  assert.equal(libre.lists().length, 5);
+  assert.match(gladys.fake.connectionStatus.message.en, /refused the e-mail address/);
+  assert.deepEqual(timers.delays(), [HOUR]);
+});
+
+test('a token about to expire is renewed by a login; a new ticket of the list is used', async () => {
+  const clock = { now: T0, jump: 0 };
+  const libre = createFakeLibre({ now: () => clock.now });
+  libre.tokenLifeMs = HOUR + 30 * MIN;
+  const { libre: api, timers } = await setup({ libre, clock });
+  assert.equal(api.logins().length, 2);
+  clock.now += 31 * MIN;
+  await poll(timers);
+  assert.equal(api.logins().length, 3, 'within the margin of 1 h');
+  api.rotate = true;
+  api.tokenLifeMs = 180 * 24 * HOUR;
+  await poll(timers);
+  await poll(timers);
+  assert.equal(api.lists().at(-1).headers.authorization, `Bearer ${api.tokens.at(-2)}`);
+  assert.equal(api.logins().length, 3);
+});
+
+test('HTTP 429: a bounded pause of every path, kept across a reconnection and a restart', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'librelinkup-app-'));
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.failures.push({ status: 429, headers: { 'retry-after': '99999999' } });
+  const { gladys, timers, app } = await setup({ libre, dataDir });
+  assert.match(gladys.fake.connectionStatus.message.en, /slow down/);
+  assert.deepEqual(timers.delays(), [INTERVALS.BUSY_MAX_MS], 'capped at 6 h');
+  await reconnect(gladys, app);
+  assert.equal(libre.requests.length, 1, 'a reconnection does not read');
+  assert.match(gladys.fake.connectionStatus.message.en, /pause goes on/);
+  await gladys.fake.configUpdated({ ...BASE_CONFIG });
+  assert.equal(libre.requests.length, 1, 'nor a saved configuration');
+  await running.stop();
+  const second = await setup({ libre, dataDir, now: T0 + HOUR });
+  assert.equal(libre.requests.length, 1, 'nor a restart');
+  assert.deepEqual(second.timers.delays(), [5 * HOUR]);
+  second.clock.now = T0 + 6 * HOUR;
+  await second.timers.run();
+  assert.equal(second.gladys.fake.connectionStatus.connected, true);
+  assert.ok(!storeText(dataDir).includes('pausedUntil'), 'forgotten after a reading that works');
+});
+
+test('a login locked for too many attempts (status 429 in the body) pauses for its lockout', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.region = null;
+  libre.failures.push({
+    status: 200,
+    body: { status: 429, data: { code: 60, data: { failures: 5, interval: 60, lockout: 600 } } },
+  });
+  const { gladys, timers } = await setup({ libre });
+  assert.match(gladys.fake.connectionStatus.message.en, /slow down/);
+  assert.deepEqual(timers.delays(), [600_000]);
+});
+
+test('5xx: paused at least for the interval; other failures retried, doubling', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.failures.push({ status: 503 }, { status: 200, body: '<html>maintenance</html>' });
+  const { gladys, timers } = await setup({ libre, config: { poll_interval: '300' } });
+  assert.match(gladys.fake.connectionStatus.message.en, /server error \(HTTP 503/);
+  assert.deepEqual(timers.delays(), [300_000]);
+  await timers.run();
+  assert.match(gladys.fake.connectionStatus.message.en, /unexpected way/);
+  assert.deepEqual(timers.delays(), [600_000], 'doubling');
+  await timers.run();
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('the app version refused (status 920): said clearly, retried slowly', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.failures.push({ status: 403, body: { status: 920, data: { minimumVersion: '9.0.0' } } });
+  const { gladys, timers } = await setup({ libre });
+  assert.match(gladys.fake.connectionStatus.message.en, /refuses the app version.*4\.16\.0/);
+  assert.deepEqual(timers.delays(), [POLL]);
+});
+
+test('a reconnection to Gladys sends the status and Discovery again, without a new login', async () => {
+  const { gladys, libre, app } = await setup();
+  const discoveries = gladys.fake.bodies('POST', '/discovered_device').length;
+  await reconnect(gladys, app);
+  assert.equal(gladys.fake.bodies('POST', '/discovered_device').length, discoveries + 1);
+  assert.equal(libre.logins().length, 2, 'the token is kept');
+  assert.equal(libre.lists().length, 2);
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('other credentials start a new session (new login)', async () => {
+  const { gladys, libre } = await setup();
+  await gladys.fake.configUpdated({ ...BASE_CONFIG, email: 'Other@example.org' });
+  assert.equal(libre.logins().length, 4, 'a new session: the global host again');
+  assert.match(gladys.fake.connectionStatus.message.en, /refused/);
+});
+
+test('privacy: no health data, name, id, credential nor token in the logs or /data', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'librelinkup-app-'));
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 - MIN, 61);
+  const { gladys, timers, logs, clock } = await setup({ libre, dataDir });
+  libre.failures.push({ status: 429 });
+  clock.now += POLL;
+  await poll(timers);
+  await gladys.fake.configUpdated({ ...BASE_CONFIG, password: WRONG });
+  const text = `${logs.join('\n')}\n${storeText(dataDir)}`;
+  for (const secret of [
+    EMAIL,
+    PASSWORD,
+    WRONG,
+    'Alice',
+    'Martin',
+    'Bob',
+    ALICE,
+    BOB,
+    USER_ID,
+    'token-',
+    'libreview',
+    '/llu/',
+    '"61"',
+    ': 61',
+  ]) {
+    assert.ok(!text.includes(secret), `${secret} leaked`);
+  }
+  assert.ok(!/glucose|mg\/dL|mmol/i.test(storeText(dataDir)), 'no health data in /data');
+});
+
+test('read only: a command is refused; the test button tells the patients', async () => {
+  const { gladys } = await setup();
+  const alice = gladys.fake.discoveredDevices[0];
+  const ack = await gladys.fake.setValue(alice, alice.features[0], 1);
+  assert.equal(ack.success, false);
+  const test = await gladys.fake.action(ACTIONS.TEST);
+  assert.equal(test.success, true, test.error);
+  assert.match(test.data.message.en, /Connected: 2 patients/);
+});
+
+test('an account that follows nobody, a connection without id, a measurement unreadable', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.connections = [];
+  const first = await setup({ libre });
+  assert.match(first.gladys.fake.connectionStatus.message.en, /follows no patient/);
+  await running.stop();
+  const other = createFakeLibre({ now: () => T0 });
+  other.connections = [
+    connection('', 'No', 'Id', measurement(T0 - MIN, 100)),
+    connection(ALICE, '', '', {
+      ...measurement(T0 - MIN, 100),
+      FactoryTimestamp: '13/45/2026 1:00:00 PM',
+    }),
+  ];
+  const { gladys } = await setup({ libre: other });
+  assert.deepEqual(
+    gladys.fake.discoveredDevices.map((d) => d.name),
+    [`LibreLinkUp ${patientKey(ALICE).slice(0, 4)}`],
+  );
+  assert.equal(last(gladys, ALICE, 'glucose_mgdl'), undefined, 'no date: no value');
+  assert.match(gladys.fake.connectionStatus.message.en, /1 patient, 1 without a measurement/);
+});
+
+test('missing or invalid credentials: nothing is sent', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  const { gladys } = await setup({ libre, config: { email: '' } });
+  assert.match(gladys.fake.connectionStatus.message.en, /Type the e-mail address/);
+  await gladys.fake.configUpdated({ ...BASE_CONFIG, email: 'not an address' });
+  assert.match(gladys.fake.connectionStatus.message.en, /not valid/);
+  await gladys.fake.configUpdated({ ...BASE_CONFIG, password: 'a\u0007b' });
+  assert.match(gladys.fake.connectionStatus.message.en, /control character/);
+  assert.equal(libre.requests.length, 0);
+});

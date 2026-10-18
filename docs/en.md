@@ -1,61 +1,157 @@
-# Demo Devices Template
+# LibreLinkUp
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+The glucose of the FreeStyle Libre sensors shared with your
+[LibreLinkUp](https://www.librelinkup.com/) account, in Gladys, through the
+cloud of Abbott, with the account of the LibreLinkUp app (the follower
+app: the patient shares their data with you from their own app).
 
-## What you get
+**Not a medical device: never use it for a treatment decision; the alerts may be late or missing.**
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+Gladys reads the cloud at the refresh you choose, through the internet, the
+phone of the patient and the servers of Abbott: any of them can be late,
+down or wrong, and Gladys says nothing when it cannot read. Keep the alarms
+of the FreeStyle Libre / LibreLinkUp apps and your care team's advice; this
+integration only adds home automation on top (a lamp that turns orange, a
+notification), never a medical alarm.
+
+- each patient shared with the account becomes a Gladys device:
+  **glucose** (mg/dL or mmol/L), **trend**, **measurement age** (minutes)
+  and the **low** and **high targets** of the account (when the API gives
+  them);
+- three scene triggers: **Glucose low**, **Glucose high** and
+  **Measurement too old**.
+
+Read only: Gladys never changes anything at LibreLinkUp (alarms, sharing,
+targets stay in the apps).
+
+> **This integration has never been tested with a real LibreLinkUp account.**
+> This first version was written from the
+> [pylibrelinkup](https://github.com/robberwick/pylibrelinkup) library (MIT),
+> ported to JavaScript, and tested against a fake LibreLinkUp API only. Tell
+> the Gladys forum what works and what does not.
+
+Unofficial integration, not affiliated with Abbott.
 
 ## Configuration
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+- **E-mail address** and **Password**: those of your LibreLinkUp account
+  (the follower app). The password is kept by Gladys in its database, never
+  shown again, never written to a log, and sent only to the LibreLinkUp API
+  of Abbott (over https, certificate checked). The e-mail address is never
+  written to a log either. Abbott may lock an account after a few wrong
+  passwords: see "Connection problems".
+- **Refresh**: every minute to every 15 minutes (2 minutes by default). One
+  request per reading (a login now and then, when the token of the session
+  expires). The sensor sends a measurement about every minute; Abbott may
+  slow down an account that reads too often.
+- **Glucose unit**: mg/dL (by default) or mmol/L, for the glucose and the
+  targets in Gladys. The core of Gladys has no glucose unit: the unit is
+  written in the name of the feature (`Glucose (mg/dL)`). Changing it adds
+  features in the new unit (update the device from Discovery); the features
+  of the old unit stay but no longer receive values. mmol/L values are
+  converted from mg/dL (÷ 18.0156, one decimal): they may differ by 0.1
+  from what the app shows.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+Then open the **Discovery** tab and create the patients to follow. Only the
+created patients receive their values and fire the triggers.
 
-## Actions
+The region of the account (Europe, United States...) is found by the API
+itself at the first login: Gladys follows it only to the official
+LibreLinkUp hosts it knows (`api-eu.libreview.io`, `api-us.libreview.io`,
+etc.), never to a host given by an answer.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+## What each feature shows
 
-## Scenes
+- **Glucose** (mg/dL or mmol/L): the latest measurement of the sensor.
+- **Trend** (1 to 5): 1 falling fast, 2 falling, 3 stable, 4 rising, 5
+  rising fast (the arrow of the app). Not published when unknown.
+- **Measurement age** (minutes): how old the latest measurement is, from
+  the clock of the sensor, at each reading.
+- **Target low / Target high**: the target range of the account (the API's
+  `targetLow` / `targetHigh`, read as mg/dL: **to be confirmed** on a real
+  account). The features appear in Discovery only once the API gave them
+  for this patient (then update the created device to add them).
+- A value the API does not give is not published. Gladys accepts 300 states
+  per minute from an integration: this one sends 250 at most.
+- **No history by default** for every feature (health data): Gladys keeps
+  only the last value. You may turn the history on per feature, knowing
+  that Gladys then keeps these health data in its database and backups.
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+## Scene triggers
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+**Glucose low** and **Glucose high**: choose the patient (or any) and the
+threshold (**required**): the target of the account, or 54 / 70 / 80 mg/dL
+(low), 180 / 250 / 300 mg/dL (high). The scene starts when a **fresh**
+measurement (15 minutes old at most) is below (above) it, at the next
+reading. **Once per crossing**: again only after a measurement 5 mg/dL
+back above (below) the threshold. A low or high already there when the
+integration starts is told at the first reading (a missing alert is worse
+than a repeated one): a restart of the integration may tell it once more.
+Never for an older measurement, nor at a reading where the clock of Gladys
+jumped. Variables: name of the patient, glucose, unit, trend, time of the
+measurement (UTC).
 
-## Dashboard
+**Measurement too old**: choose the patient (or any) and the delay
+(**required**: 15 minutes to 4 hours). The scene starts when no new
+measurement came for this delay (sensor ended or removed, phone of the
+patient without network or Bluetooth...). Once per wait: a new measurement
+arms it again. Never for a delay already reached when the integration
+starts, nor at a reading after a clock jump. **Nothing is told when
+LibreLinkUp itself cannot be read** (no internet, Abbott down, account
+stopped): watch the connection status of the integration.
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+30 events at most per reading; the rest goes at the next reading.
 
-## Troubleshooting
+## Connection problems
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+- **Credentials refused**: a wrong password tried again and again locks
+  the account. Gladys therefore stops for **1 hour**, then **6 hours**,
+  then **24 hours** after each new refusal, never in a loop. The stop is
+  kept in `/data`: a restart, a reconnection of Gladys and the test button
+  wait too. An attempt still in flight when the integration stops counts as
+  a refusal. Saving the configuration with the same credentials makes
+  **one** attempt at once per series of refusals; other credentials are
+  tried at once. A reading that works forgets the refusals.
+- **New terms of use, privacy policy or e-mail to verify**: when the API
+  asks for one of them, Gladys **never accepts it for you**. It stops with
+  a message: open the LibreLinkUp app with this account, accept there, then
+  save the configuration of the integration (or wait for the next attempt:
+  1 hour, then 6 hours, then 24 hours).
+- **LibreLinkUp overloaded** (HTTP 429, or a login locked for too many
+  attempts) or **server error** (HTTP 5xx): every request is paused, for
+  the time LibreLinkUp asks between 1 minute and 6 hours, never less than
+  the refresh. The pause is kept in `/data`, even across a restart, a
+  reconnection of Gladys or a saved configuration.
+- **App version refused**: the API refuses old versions of its app. The
+  integration sends a fixed version (see TODO.md); if LibreLinkUp refuses
+  it, the status says so: update the integration.
+- **Unexpected answer, LibreLinkUp unreachable** (network, 30 s timeout,
+  certificate, region outside the list): retried after the refresh, then
+  the delay doubles up to 1 hour, even after a restart (the wait is kept in
+  `/data`). The integration never gives up.
+- **Test the connection** reads again and says how many patients answer;
+  it never shortens a stop nor a pause.
+
+## Privacy
+
+Glucose values, trends, dates of measurements, the names and ids of the
+patients, the e-mail address, the password and the token of the session are
+never written to a log nor to the `/data` volume of the integration. `/data`
+only keeps a short digest of the credentials (4 characters, used only to
+see that they changed) with the end of a stop, of a pause or of a wait. The
+token stays in memory. Gladys keeps the last value of each feature in its
+database (and its backups), and the history only if you turn it on. The
+scene triggers hand the glucose to your scenes (to write a notification):
+it is then where your scenes send it. The external id of a device is a
+non-secret digest of the LibreLinkUp id of the patient (never the id
+itself). The name of a device is the name of the patient as LibreLinkUp
+gives it: rename it in Gladys if you prefer.
+
+## Limits
+
+- One account per integration, 20 patients at most (the patients created in
+  Gladys first).
+- Nothing is commanded: neither the alarms of the app, nor the sharing.
+- No history of the sensor (the graph of the last 12 hours) nor logbook
+  read: only the latest measurement.
+- Never tested with a real account: see TODO.md in the repository.

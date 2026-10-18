@@ -1,67 +1,173 @@
-# Template de démonstration
+# LibreLinkUp
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+La glycémie des capteurs FreeStyle Libre partagés avec votre compte
+[LibreLinkUp](https://www.librelinkup.com/), dans Gladys, par le cloud
+d’Abbott, avec le compte de l’application LibreLinkUp (l’application
+d’abonné : le patient vous partage ses données depuis sa propre
+application).
 
-## Ce que vous obtenez
+**Pas un dispositif médical : ne jamais s’en servir pour une décision de traitement ; les alertes peuvent être en retard ou manquer.**
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+Gladys lit le cloud au rythme que vous choisissez, en passant par internet,
+le téléphone du patient et les serveurs d’Abbott : chacun peut être en
+retard, en panne ou se tromper, et Gladys ne dit rien quand elle ne peut
+pas lire. Gardez les alarmes des applications FreeStyle Libre / LibreLinkUp
+et les conseils de votre équipe soignante ; cette intégration n’ajoute que
+de la domotique par-dessus (une lampe qui passe à l’orange, une
+notification), jamais une alarme médicale.
+
+- chaque patient partagé avec le compte devient un appareil Gladys :
+  **glycémie** (mg/dL ou mmol/L), **tendance**, **âge de la mesure**
+  (minutes) et les **cibles basse** et **haute** du compte (quand l’API
+  les donne) ;
+- trois déclencheurs de scène : **Glycémie basse**, **Glycémie haute** et
+  **Mesure trop ancienne**.
+
+Lecture seule : Gladys ne change jamais rien chez LibreLinkUp (alarmes,
+partage, cibles restent dans les applications).
+
+> **Cette intégration n’a jamais été testée avec un vrai compte LibreLinkUp.**
+> Cette première version a été écrite à partir de la bibliothèque
+> [pylibrelinkup](https://github.com/robberwick/pylibrelinkup) (MIT),
+> portée en JavaScript, et testée seulement contre une fausse API
+> LibreLinkUp. Dites sur le forum Gladys ce qui marche et ce qui ne marche
+> pas.
+
+Intégration non officielle, sans lien avec Abbott.
 
 ## Configuration
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+- **Adresse e-mail** et **Mot de passe** : ceux de votre compte LibreLinkUp
+  (l’application d’abonné). Le mot de passe est gardé par Gladys dans sa
+  base, jamais réaffiché, jamais écrit dans un journal, et envoyé seulement
+  à l’API LibreLinkUp d’Abbott (en https, certificat vérifié). L’adresse
+  e-mail n’est jamais écrite dans un journal non plus. Abbott peut bloquer
+  un compte après quelques mauvais mots de passe : voir « Problèmes de
+  connexion ».
+- **Rafraîchissement** : toutes les minutes à toutes les 15 minutes
+  (2 minutes par défaut). Une requête par lecture (une connexion de temps
+  en temps, quand le jeton de la session expire). Le capteur envoie une
+  mesure environ toutes les minutes ; Abbott peut ralentir un compte qui
+  lit trop souvent.
+- **Unité de glycémie** : mg/dL (par défaut) ou mmol/L, pour la glycémie et
+  les cibles dans Gladys. Le cœur de Gladys n’a pas d’unité de glycémie :
+  l’unité est écrite dans le nom de la fonction (`Glucose (mg/dL)`). La
+  changer ajoute des fonctions dans la nouvelle unité (mettez l’appareil à
+  jour depuis Découverte) ; les fonctions de l’ancienne unité restent mais
+  ne reçoivent plus de valeur. Les valeurs en mmol/L sont converties depuis
+  les mg/dL (÷ 18,0156, une décimale) : elles peuvent différer de 0,1 de
+  l’application.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+Ouvrez ensuite l’onglet **Découverte** et créez les patients à suivre.
+Seuls les patients créés reçoivent leurs valeurs et déclenchent les scènes.
 
-## Actions
+La région du compte (Europe, États-Unis…) est trouvée par l’API elle-même
+à la première connexion : Gladys la suit seulement vers les hôtes
+officiels LibreLinkUp qu’elle connaît (`api-eu.libreview.io`,
+`api-us.libreview.io`, etc.), jamais vers un hôte donné par une réponse.
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+## Ce que montre chaque fonction
 
-## Scènes
+- **Glycémie** (mg/dL ou mmol/L) : la dernière mesure du capteur.
+- **Tendance** (1 à 5) : 1 baisse rapide, 2 baisse, 3 stable, 4 hausse,
+  5 hausse rapide (la flèche de l’application). Non publiée si inconnue.
+- **Ancienneté de la mesure** (fonction « Measurement age », minutes) : l’âge de la dernière mesure,
+  d’après l’horloge du capteur, à chaque lecture.
+- **Cible basse / Cible haute** : la plage cible du compte (`targetLow` /
+  `targetHigh` de l’API, lus en mg/dL : **à confirmer** sur un vrai
+  compte). Ces fonctions n’apparaissent dans Découverte qu’une fois données
+  par l’API pour ce patient (mettez alors l’appareil créé à jour).
+- Une valeur que l’API ne donne pas n’est pas publiée. Gladys accepte 300
+  états par minute d’une intégration : celle-ci en envoie 250 au plus.
+- **Pas d’historique par défaut** pour toutes les fonctions (données de
+  santé) : Gladys ne garde que la dernière valeur. Vous pouvez activer
+  l’historique fonction par fonction, en sachant que Gladys garde alors ces
+  données de santé dans sa base et ses sauvegardes.
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+## Déclencheurs de scène
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+**Glycémie basse** et **Glycémie haute** : choisissez le patient (ou tous)
+et le seuil (**obligatoire**) : la cible du compte, ou 54 / 70 / 80 mg/dL
+(basse), 180 / 250 / 300 mg/dL (haute). La scène démarre quand une mesure
+**récente** (15 minutes au plus) passe sous (au-dessus de) ce seuil, à la
+lecture suivante. **Une fois par passage** : de nouveau seulement après une
+mesure revenue 5 mg/dL au-dessus (en dessous) du seuil. Une glycémie basse
+ou haute déjà là au démarrage de l’intégration est signalée à la première
+lecture (une alerte manquée est pire qu’une alerte répétée) : un
+redémarrage de l’intégration peut la signaler une fois de plus. Jamais pour
+une mesure plus ancienne, ni à une lecture où l’horloge de Gladys a sauté.
+Variables : nom du patient, glycémie, unité, tendance, heure de la mesure
+(UTC).
 
-## Tableau de bord
+**Mesure trop ancienne** : choisissez le patient (ou tous) et le délai
+(**obligatoire** : 15 minutes à 4 heures). La scène démarre quand aucune
+nouvelle mesure n’est arrivée depuis ce délai (capteur terminé ou retiré,
+téléphone du patient sans réseau ou sans Bluetooth…). Une fois par
+attente : une nouvelle mesure le réarme. Jamais pour un délai déjà atteint
+au démarrage de l’intégration, ni à une lecture après un saut d’horloge.
+**Rien n’est signalé quand LibreLinkUp lui-même ne peut pas être lu** (pas
+d’internet, Abbott en panne, compte arrêté) : surveillez l’état de la
+connexion de l’intégration.
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+30 événements au plus par lecture ; le reste part à la lecture suivante.
 
-## Dépannage
+## Problèmes de connexion
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+- **Identifiants refusés** : un mauvais mot de passe essayé encore et
+  encore bloque le compte. Gladys s’arrête donc **1 heure**, puis
+  **6 heures**, puis **24 heures** après chaque nouveau refus, jamais en
+  boucle. L’arrêt est gardé dans `/data` : un redémarrage, une reconnexion
+  de Gladys et le bouton de test attendent aussi. Un essai encore en cours
+  quand l’intégration s’arrête compte comme un refus. Enregistrer la
+  configuration avec les mêmes identifiants fait **un** essai tout de suite
+  par série de refus ; d’autres identifiants sont essayés tout de suite.
+  Une lecture qui marche oublie les refus.
+- **Nouvelles conditions d’utilisation, politique de confidentialité ou
+  e-mail à vérifier** : quand l’API en demande une, Gladys **ne l’accepte
+  jamais à votre place**. Elle s’arrête avec un message : ouvrez
+  l’application LibreLinkUp avec ce compte, acceptez-y, puis enregistrez la
+  configuration de l’intégration (ou attendez le prochain essai : 1 heure,
+  puis 6 heures, puis 24 heures).
+- **LibreLinkUp surchargé** (HTTP 429, ou connexion bloquée après trop
+  d’essais) ou **erreur serveur** (HTTP 5xx) : toutes les requêtes sont
+  suspendues, le temps que LibreLinkUp demande, entre 1 minute et 6 heures,
+  jamais moins que le rafraîchissement. La pause est gardée dans `/data`,
+  même après un redémarrage, une reconnexion de Gladys ou une configuration
+  enregistrée.
+- **Version d’application refusée** : l’API refuse les anciennes versions
+  de son application. L’intégration envoie une version fixe (voir
+  TODO.md) ; si LibreLinkUp la refuse, l’état le dit : mettez l’intégration
+  à jour.
+- **Réponse inattendue, LibreLinkUp injoignable** (réseau, délai de 30 s,
+  certificat, région hors de la liste) : nouvel essai après le
+  rafraîchissement, puis le délai double jusqu’à 1 heure, même après un
+  redémarrage (l’attente est gardée dans `/data`). L’intégration
+  n’abandonne jamais.
+- **Tester la connexion** relit et indique combien de patients répondent ;
+  il ne raccourcit jamais un arrêt ni une pause.
+
+## Vie privée
+
+Les glycémies, les tendances, les heures des mesures, les noms et
+identifiants des patients, l’adresse e-mail, le mot de passe et le jeton de
+la session ne sont jamais écrits dans un journal ni dans le volume `/data`
+de l’intégration. `/data` ne garde qu’une courte empreinte des
+identifiants (4 caractères, seulement pour voir qu’ils ont changé) avec la
+fin d’un arrêt, d’une pause ou d’une attente. Le jeton reste en mémoire.
+Gladys garde la dernière valeur de chaque fonction dans sa base (et ses
+sauvegardes), et l’historique seulement si vous l’activez. Les
+déclencheurs de scène transmettent la glycémie à vos scènes (pour écrire
+une notification) : elle va alors là où vos scènes l’envoient.
+L’identifiant externe d’un appareil est une empreinte non secrète de
+l’identifiant LibreLinkUp du patient (jamais l’identifiant lui-même). Le
+nom d’un appareil est le nom du patient tel que LibreLinkUp le donne :
+renommez-le dans Gladys si vous préférez.
+
+## Limites
+
+- Un compte par intégration, 20 patients au plus (les patients créés dans
+  Gladys d’abord).
+- Rien n’est commandé : ni les alarmes de l’application, ni le partage.
+- Ni l’historique du capteur (le graphique des 12 dernières heures) ni le
+  journal ne sont lus : seulement la dernière mesure.
+- Jamais testée avec un vrai compte : voir TODO.md dans le dépôt.
