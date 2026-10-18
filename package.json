@@ -1,6 +1,6 @@
 {
   "name": "gladys-librelinkup",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for LibreLinkUp: glucose, trend and age of the measurement of the FreeStyle Libre sensors shared with a LibreLinkUp account, read only, through the cloud of Abbott. Not a medical device. Unofficial, not affiliated with Abbott.",
   "type": "module",

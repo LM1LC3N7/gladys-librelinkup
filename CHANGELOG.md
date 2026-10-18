@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-18
+
 ### Added
 
 - First version, never tested with a real LibreLinkUp account: the patients
@@ -57,3 +59,6 @@ the notes of the version's GitHub Release.
 - The token is renewed at half of its life when it is short.
 - Docs: the "target" threshold, the age without measurement, where names
   and glucose values go.
+
+[Unreleased]: https://github.com/LM1LC3N7/gladys-librelinkup/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-librelinkup/releases/tag/v0.1.1
