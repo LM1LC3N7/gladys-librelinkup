@@ -106,7 +106,8 @@ déclenche jamais pour un patient dont le compte ne donne pas de cible.
 **Une fois par passage** : de nouveau seulement après une mesure revenue
 5 mg/dL au-dessus (en dessous) du seuil, après une interruption de plus de
 15 minutes entre deux mesures, ou quand le patient n’a pas été lu depuis
-plus de 15 minutes. Une glycémie basse
+plus de 15 minutes (avec un rafraîchissement de 15 minutes : le
+rafraîchissement + 2 minutes, soit au moins une lecture manquée). Une glycémie basse
 ou haute déjà là au démarrage de l’intégration est signalée à la première
 lecture (une alerte manquée est pire qu’une alerte répétée) : un
 redémarrage de l’intégration peut la signaler une fois de plus. Jamais pour

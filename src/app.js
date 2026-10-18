@@ -70,6 +70,8 @@ const CLOCK_JUMP_MS = 5 * 60_000;
 const CONFIG_RETRY_MS = 60_000;
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
+/** Added to the poll interval: the gap that means "a reading missed". */
+const GAP_MARGIN_MS = 2 * MINUTE;
 /** Entries per publishTransports call (the SDK refuses more). */
 export const TRANSPORTS_PER_CALL = 100;
 const STALE = STALE_MINUTES.map(Number);
@@ -857,24 +859,30 @@ export class LibreApp {
     this.lastClock = { wall: now, mono };
 
     let futureCount = 0;
+    // "A new episode" means at least one reading missed: never less than
+    // 15 min, nor than the poll interval + 2 min (a slow request included).
+    const gapMs = Math.max(GLUCOSE.FRESH_MS, this.pollMs() + GAP_MARGIN_MS);
     for (const patient of followed) {
       // A measurement dated more than a day ahead is no measurement (a
-      // phone or a sensor with a wrong clock).
+      // phone or a sensor with a wrong clock); any measurement ahead counts
+      // for the clock warning of the status.
+      if (patient.measurement && patient.measurement.timestampMs - now > FUTURE_MS) {
+        futureCount += 1;
+      }
       const m =
         patient.measurement && patient.measurement.timestampMs <= now + DAY
           ? patient.measurement
           : null;
       delete patient.measurement;
-      if (m && m.timestampMs - now > FUTURE_MS) futureCount += 1;
-      // Not seen for a while (no reading, or not in the list): what "low"
-      // and "high" fired is forgotten, a low still there is told again.
+      // Not seen for a while (readings missed, or not in the list): what
+      // "low" and "high" fired is forgotten, a low still there is told again.
       const seen = this.lastSeen.get(patient.key);
-      if (seen !== undefined && mono - seen > GLUCOSE.FRESH_MS) this.alarms.delete(patient.key);
+      if (seen !== undefined && mono - seen > gapMs) this.alarms.delete(patient.key);
       this.lastSeen.set(patient.key, mono);
       const previous = this.lastMeasurement.get(patient.key);
       if (m && m.timestampMs !== previous?.timestampMs) {
-        // A gap of more than 15 min between two measurements: a new episode.
-        if (previous && Math.abs(m.timestampMs - previous.timestampMs) > GLUCOSE.FRESH_MS) {
+        // A gap between two measurements: a new episode.
+        if (previous && Math.abs(m.timestampMs - previous.timestampMs) > gapMs) {
           this.alarms.delete(patient.key);
         }
         this.lastMeasurement.set(patient.key, { timestampMs: m.timestampMs, firstSeen: mono });

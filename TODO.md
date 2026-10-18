@@ -233,5 +233,13 @@ s: step, u: end, p: pending, f: forced, t: terms }` under a salted digest
   - (M9) names lose C0 / C1 controls, bidi marks and zero-width
     characters; cut without breaking a surrogate pair;
   - (M10) the freshness of the list against `/graph` added to milestone 2.
+- **Approval round 1** (R1-R3): the gap that forgets the fired low / high
+  thresholds (patient unseen, or between two measurements) is
+  max(15 min, poll interval + 2 min): at least one reading missed, so a
+  15-min refresh with slow requests never tells a continuous low at every
+  reading; a measurement dropped for being more than a day ahead counts
+  for the clock warning too; tests for a disconnection between the login
+  and the list (nothing in `/data`, read again at once) and for a 50-min
+  token (one login).
 - **Dates**: every date shown is UTC; `test/timezone.test.js` runs
   `test/app.test.js` again with TZ=Europe/Lisbon and TZ=Europe/Helsinki.

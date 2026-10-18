@@ -45,6 +45,10 @@ the notes of the version's GitHub Release.
   warning to the status; "low" / "high" are told again after 15 minutes
   without the patient or between two measurements, and only for a
   measurement first seen 15 minutes ago at most.
+- With a slow refresh (15 minutes), a continuous low or high is no longer
+  told again at every reading: "told again" needs at least one reading
+  missed (15 minutes, or the refresh + 2 minutes if longer). A measurement
+  more than a day in the future also triggers the clock warning.
 - Scene events use the name of the device in Gladys; patient names lose
   invisible and direction characters.
 - The token is renewed at half of its life when it is short.

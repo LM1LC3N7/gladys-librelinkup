@@ -255,6 +255,82 @@ test('low told again after a gap of 15 min between measurements, or 15 min unsee
   assert.equal(lows(), 12, 'not seen for 15 min: told again');
 });
 
+test('refresh of 15 min, slow requests: one alert for 2 h of continuous low', async () => {
+  const clock = { now: T0, jump: 0 };
+  const libre = createFakeLibre({ now: () => clock.now });
+  libre.glucose(ALICE, T0 - MIN, 50);
+  const request = libre.request;
+  // Every request takes 20 s: two readings are more than 15 min apart.
+  libre.request = async (...args) => {
+    clock.now += 20_000;
+    return request(...args);
+  };
+  const { gladys, timers } = await setup({ libre, clock, config: { poll_interval: '900' } });
+  const lows70 = () =>
+    gladys.fake.sceneEvents.filter(
+      (e) => e.key === SCENE_TRIGGERS.GLUCOSE_LOW && e.data.threshold === '70',
+    ).length;
+  assert.equal(lows70(), 1);
+  for (let i = 0; i < 8; i += 1) {
+    clock.now += 900_000;
+    libre.glucose(ALICE, clock.now - MIN, 50);
+    await poll(timers, 900_000);
+  }
+  assert.equal(libre.lists().length, 9);
+  assert.equal(lows70(), 1, 'not told again at every reading');
+});
+
+test('a measurement more than a day ahead is dropped but still warns about the clock', async () => {
+  const libre = createFakeLibre({ now: () => T0 });
+  libre.glucose(ALICE, T0 + 2 * 24 * HOUR, 50);
+  const { gladys } = await setup({ libre });
+  assert.match(gladys.fake.connectionStatus.message.en, /1 measurement is dated in the future/);
+  assert.equal(last(gladys, ALICE, 'glucose_mgdl'), undefined, 'dropped');
+});
+
+test('a disconnection between the login and the list: nothing in /data, read again at once', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'librelinkup-app-'));
+  const { gladys, libre, timers, app, clock } = await setup({ dataDir });
+  app.session.token = null;
+  let open;
+  libre.gate = new Promise((resolve) => {
+    open = resolve;
+  });
+  const logins = libre.logins().length;
+  clock.now += POLL;
+  const round = poll(timers);
+  for (let i = 0; i < 400 && libre.logins().length === logins; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(libre.logins().length, logins + 1, 'the login left');
+  gladys.emit('disconnected');
+  libre.gate = null;
+  open();
+  await round;
+  const lists = libre.lists().length;
+  assert.equal(lists, 1, 'the list was never asked by the closed client');
+  const text = storeText(dataDir);
+  assert.ok(!/retryAt|pausedUntil/.test(text), text);
+  assert.doesNotMatch(text, /"refusals": \{\s*"/);
+  await reconnect(gladys, app);
+  assert.equal(libre.lists().length, lists + 1, 'read at once');
+  assert.equal(libre.logins().length, logins + 1, 'the token of that login is kept');
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('a token of 50 min: one login over several readings', async () => {
+  const clock = { now: T0, jump: 0 };
+  const libre = createFakeLibre({ now: () => clock.now });
+  libre.tokenLifeMs = 50 * MIN;
+  const { timers } = await setup({ libre, clock });
+  for (let i = 0; i < 10; i += 1) {
+    clock.now += POLL;
+    await poll(timers);
+  }
+  assert.equal(libre.lists().length, 11);
+  assert.equal(libre.logins().length, 2, 'global host and region: one login');
+});
+
 test('a measurement dated in the future: the status asks to check the clock', async () => {
   const libre = createFakeLibre({ now: () => T0 });
   libre.glucose(ALICE, T0 + HOUR, 50);
