@@ -94,10 +94,10 @@ measurement (15 minutes old at most) is below (above) it, at the next
 reading. A measurement counts as fresh only if the integration first saw
 it 15 minutes ago at most. The "target" threshold never fires for a
 patient whose account gives no target. **Once per crossing**: again only
-after a measurement 5 mg/dL back above (below) the threshold, after a gap
-of more than 15 minutes between two measurements, or when the patient was
-not read for more than 15 minutes (with a refresh of 15 minutes: the
-refresh + 2 minutes, that is at least one reading missed). A low or high already there when the
+after a measurement 5 mg/dL back above (below) the threshold, or after at
+least one reading missed: when the patient was not read, or two of its
+measurements are apart, for longer than max(15 minutes, refresh + 2
+minutes). A low or high already there when the
 integration starts is told at the first reading (a missing alert is worse
 than a repeated one): a restart of the integration may tell it once more.
 Never for an older measurement, nor at a reading where the clock of Gladys

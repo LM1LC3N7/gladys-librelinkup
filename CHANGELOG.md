@@ -49,6 +49,9 @@ the notes of the version's GitHub Release.
   told again at every reading: "told again" needs at least one reading
   missed (15 minutes, or the refresh + 2 minutes if longer). A measurement
   more than a day in the future also triggers the clock warning.
+- Docs and trigger descriptions: the delay max(15 minutes, refresh + 2
+  minutes) applies both to a patient not read and to the gap between two
+  measurements.
 - Scene events use the name of the device in Gladys; patient names lose
   invisible and direction characters.
 - The token is renewed at half of its life when it is short.

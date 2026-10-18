@@ -323,12 +323,21 @@ test('a token of 50 min: one login over several readings', async () => {
   const libre = createFakeLibre({ now: () => clock.now });
   libre.tokenLifeMs = 50 * MIN;
   const { timers } = await setup({ libre, clock });
-  for (let i = 0; i < 10; i += 1) {
+  // Half of its life (25 min): renewed once at 26 min, then not again before 51 min.
+  for (let i = 0; i < 12; i += 1) {
     clock.now += POLL;
     await poll(timers);
   }
-  assert.equal(libre.lists().length, 11);
-  assert.equal(libre.logins().length, 2, 'global host and region: one login');
+  assert.equal(libre.logins().length, 2, 'global host and region: one login for 24 min');
+  clock.now += POLL;
+  await poll(timers);
+  assert.equal(libre.logins().length, 3, 'renewed at half of its life, in the region');
+  for (let i = 0; i < 7; i += 1) {
+    clock.now += POLL;
+    await poll(timers);
+  }
+  assert.equal(libre.lists().length, 21);
+  assert.equal(libre.logins().length, 3, 'the new token lasts');
 });
 
 test('a measurement dated in the future: the status asks to check the clock', async () => {

@@ -99,8 +99,8 @@
       "key": "glucose_low",
       "label": { "en": "Glucose low", "fr": "Glycémie basse" },
       "description": {
-        "en": "A new measurement (15 min old at most) of a patient created in Gladys is below the chosen threshold (“target”: never for a patient without a target). Once per crossing: again only after a measurement 5 mg/dL above it, or a gap of 15 min. Read at the chosen refresh: may be late or missing, never a medical alarm.",
-        "fr": "Une nouvelle mesure (15 min au plus) d’un patient créé dans Gladys est sous le seuil choisi (« cible » : jamais pour un patient sans cible). Une fois par passage : de nouveau seulement après une mesure 5 mg/dL au-dessus, ou une interruption de 15 min. Lu au rythme du rafraîchissement : peut être en retard ou manquer, jamais une alarme médicale."
+        "en": "A new measurement (15 min old at most) of a patient created in Gladys is below the chosen threshold (“target”: never for a patient without a target). Once per crossing: again only after a measurement 5 mg/dL above it, or after a reading missed (patient not read, or two measurements apart, for more than max(15 min, refresh + 2 min)). Read at the chosen refresh: may be late or missing, never a medical alarm.",
+        "fr": "Une nouvelle mesure (15 min au plus) d’un patient créé dans Gladys est sous le seuil choisi (« cible » : jamais pour un patient sans cible). Une fois par passage : de nouveau seulement après une mesure 5 mg/dL au-dessus, ou après une lecture manquée (patient non lu, ou deux mesures écartées, depuis plus de max(15 min, rafraîchissement + 2 min)). Lu au rythme du rafraîchissement : peut être en retard ou manquer, jamais une alarme médicale."
       },
       "fields": [
         {
@@ -155,8 +155,8 @@
       "key": "glucose_high",
       "label": { "en": "Glucose high", "fr": "Glycémie haute" },
       "description": {
-        "en": "A new measurement (15 min old at most) of a patient created in Gladys is above the chosen threshold (“target”: never for a patient without a target). Once per crossing: again only after a measurement 5 mg/dL below it, or a gap of 15 min. Read at the chosen refresh: may be late or missing, never a medical alarm.",
-        "fr": "Une nouvelle mesure (15 min au plus) d’un patient créé dans Gladys est au-dessus du seuil choisi (« cible » : jamais pour un patient sans cible). Une fois par passage : de nouveau seulement après une mesure 5 mg/dL en dessous, ou une interruption de 15 min. Lu au rythme du rafraîchissement : peut être en retard ou manquer, jamais une alarme médicale."
+        "en": "A new measurement (15 min old at most) of a patient created in Gladys is above the chosen threshold (“target”: never for a patient without a target). Once per crossing: again only after a measurement 5 mg/dL below it, or after a reading missed (patient not read, or two measurements apart, for more than max(15 min, refresh + 2 min)). Read at the chosen refresh: may be late or missing, never a medical alarm.",
+        "fr": "Une nouvelle mesure (15 min au plus) d’un patient créé dans Gladys est au-dessus du seuil choisi (« cible » : jamais pour un patient sans cible). Une fois par passage : de nouveau seulement après une mesure 5 mg/dL en dessous, ou après une lecture manquée (patient non lu, ou deux mesures écartées, depuis plus de max(15 min, rafraîchissement + 2 min)). Lu au rythme du rafraîchissement : peut être en retard ou manquer, jamais une alarme médicale."
       },
       "fields": [
         {
