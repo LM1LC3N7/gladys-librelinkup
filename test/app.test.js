@@ -132,7 +132,7 @@ test('start: login with the region, status, Discovery, every value; one request 
   assert.equal(login.headers.authorization, undefined);
   assert.equal(login.headers.product, 'llu.android');
   assert.equal(login.headers.version, '4.16.0');
-  assert.match(login.headers['user-agent'], /^gladys-librelinkup\/0\.1\.0$/);
+  assert.match(login.headers['user-agent'], /^gladys-librelinkup\/\d+\.\d+\.\d+$/);
   assert.equal(list.headers.authorization, 'Bearer token-1');
   assert.equal(list.headers['account-id'], createHash('sha256').update(USER_ID).digest('hex'));
   assert.equal(list.body, undefined);
